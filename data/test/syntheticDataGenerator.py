@@ -17,4 +17,7 @@ for i in xrange(1,n_class+1):
 
         for each in seq:
             data_line += each + ''.join(random.sample(string.uppercase, random.randint(0,3)))
+        data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
         f2.write(str(i)+' '+data_line+'\n')
+
+#os.system('python syntheticTestDataGenerator.py')

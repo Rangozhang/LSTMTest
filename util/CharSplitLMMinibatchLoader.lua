@@ -5,19 +5,20 @@ require 'util.OneHot'
 local CharSplitLMMinibatchLoader = {}
 CharSplitLMMinibatchLoader.__index = CharSplitLMMinibatchLoader
 
-function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, input_path)
+function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches)
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
-    input_path = input_path or 'input.txt'
-
     local self = {}
+    self.n_class = n_class
+    self.nbatches = nbatches or 1000
+
     setmetatable(self, CharSplitLMMinibatchLoader)
 
-    local input_file = path.join(data_dir, input_path)
+    local input_file = path.join(data_dir, 'input.txt')
     local vocab_file = path.join(data_dir, 'vocab.t7')
     local tensor_file = path.join(data_dir, 'data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local run_prepro = false
+    local run_prepro = true -- false
     if not (path.exists(vocab_file) or path.exists(tensor_file)) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and data.t7 do not exist. Running preprocessing...')
@@ -42,7 +43,9 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     print('loading data files...')
     local saveddata = torch.load(tensor_file)
     self.vocab_mapping = torch.load(vocab_file)
-    print(saveddata)
+    --print(saveddata)
+    --print(saveddata.label)
+    --io.read()
 
     -- cut off the end so that it divides evenly
     --[[
@@ -69,8 +72,6 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     local label = saveddata.label
     local n_data = saveddata.n_data
 
-    self.nbatches = 800  -- number of batches
-    n_class = 5          -- number of class
     self.x_batches = {}
     self.y_batches = {}
     ind_batch = torch.Tensor(batch_size)
@@ -184,9 +185,11 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
     -- create vocabulary if it doesn't exist yet
     print('creating vocabulary mapping...')
     -- record all characters to a set
-    local unordered = {}
-    -- #repeat
-    --    rawdata = f:read("*line") --(cache_len)
+    local ordered = {}
+    local lowercase = 'abcdefghijklmnopqrstuvwxyz'
+    for c in lowercase .. string.upper(lowercase) do
+        ordered[#ordered+1] = c
+    end
     local n_line = 0
     local n_chars = {}
     for line in io.lines(in_textfile) do
@@ -194,25 +197,17 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
         local count_chars = 0
         for char in line:gmatch'[%a_]' do
             count_chars = count_chars+1 
-            if not unordered[char] then 
-                unordered[char] = true 
-            end
         end
         n_line = n_line + 1
         n_chars[n_line] = count_chars
-        -- tot_len = tot_len + #rawdata
-        -- rawdata = f:read("*line")
-    --until not rawdata
     end
-    -- sort into a table (i.e. keys become 1..N)
-    local ordered = {}
-    for char in pairs(unordered) do ordered[#ordered + 1] = char end
-    table.sort(ordered)
     -- invert `ordered` to create the char->int mapping
     local vocab_mapping = {}
     for i, char in ipairs(ordered) do
         vocab_mapping[char] = i
     end
+    print(vocab_mapping)
+    io.read()
     -- construct a tensor with all the data
     print('putting data into tensor...')
     --local data = torch.ByteTensor(tot_len) -- store it into 1D first, then rearrange
@@ -231,7 +226,7 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
         end
         data[cur_line] = data_per_line:clone()
         for char in line:gmatch'%d' do
-           label[cur_line] = tonumber(char)
+           label[cur_line] = (label[cur_line] or 0)*10 + tonumber(char)
         end  
         --[[
         --local currlen = 0

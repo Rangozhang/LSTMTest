@@ -4,8 +4,8 @@ require 'torch'
 require 'nn'
 require 'nngraph'
 
-require 'util.OneHot'
-require 'util.misc'
+require 'OneHot'
+require 'misc'
 
 cmd = torch.CmdLine()
 cmd:text()

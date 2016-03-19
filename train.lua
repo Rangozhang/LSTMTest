@@ -1,4 +1,4 @@
-require 'torch'
+
 require 'nn'
 require 'nngraph'
 require 'optim'
@@ -29,14 +29,16 @@ cmd:option('-data_dir','data/test','data directory. Should contain the file inpu
 -- model params
 cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 1, 'number of layers in the LSTM')
-cmd:option('-model', 'lstm', 'lstm,gru or rnn')
+cmd:option('-model', 'lstm', 'lstm, gru or rnn')
+cmd:option('-n_class', 10, 'number of categories')
+cmd:option('-nbatches', 500, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',2e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.97,'learning rate decay')
 cmd:option('-learning_rate_decay_after',10,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
-cmd:option('-seq_length',3,'number of timesteps to unroll for')
+cmd:option('-seq_length', 3,'number of timesteps to unroll for')
 cmd:option('-batch_size',128,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',100,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
@@ -63,6 +65,7 @@ local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
+
 if opt.gpuid >= 0 and opt.opencl == 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
@@ -79,6 +82,7 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
         opt.gpuid = -1 -- overwrite user setting
     end
 end
+--]]
 
 -- initialize clnn/cltorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 1 then
@@ -99,7 +103,7 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- create the data loader class
-local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
+local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -128,9 +132,8 @@ if string.len(opt.init_from) > 0 then
 else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
-    n_class = 5
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -318,6 +321,8 @@ function feval(x)
 end
 
 -- start optimization here
+
+print("start training:")
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
