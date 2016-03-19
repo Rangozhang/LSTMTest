@@ -18,7 +18,7 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     local tensor_file = path.join(data_dir, 'data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local run_prepro = true -- false
+    local run_prepro = false
     if not (path.exists(vocab_file) or path.exists(tensor_file)) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and data.t7 do not exist. Running preprocessing...')
@@ -47,15 +47,30 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     --print(saveddata.label)
     --io.read()
 
-    -- cut off the end so that it divides evenly
-    --[[
-    local len = data:size(1)
-    if len % (batch_size * seq_length) ~= 0 then
-        print('cutting off end of data so that the batches/sequences divide evenly')
-        data = data:sub(1, batch_size * seq_length 
-                    * math.floor(len / (batch_size * seq_length)))
+    -----------------------------------------------
+    -- for test set
+    local test_input_file = path.join(data_dir, 'test.txt')
+    local test_tensor_file = path.join(data_dir, 'test_data.t7')
+
+    -- fetch file attributes to determine if we need to rerun preprocessing
+    local test_run_prepro = false
+    if not (path.exists(vocab_file) or path.exists(test_tensor_file)) then
+        -- prepro files do not exist, generate them
+        print('vocab.t7 and test_data.t7 do not exist. Running preprocessing...')
+        test_run_prepro = true
     end
-    --]]
+    if run_prepro then
+        -- construct a tensor with all the data, and vocab file
+        print('one-time setup: preprocessing input text file ' .. test_input_file .. '...')
+        CharSplitLMMinibatchLoader.text_to_tensor(test_input_file, vocab_file, test_tensor_file)
+    end
+
+    print('loading data files...')
+    local test_saveddata = torch.load(test_tensor_file)
+
+    self.test_x = test_saveddata.data
+    self.test_y = test_saveddata.label
+    self.test_n_data = test_saveddata.n_data
 
     -- count vocab
     self.vocab_size = 0
@@ -78,7 +93,6 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     for j = 1, batch_size do
         ind_batch[j] = math.ceil(torch.uniform()*n_data)
     end
-    --tmp = torch.Tensor(n_data):fill(0)
     strt_batch = torch.Tensor(batch_size):fill(1)
     for i = 1, self.nbatches do
         local batch_data = torch.Tensor(batch_size, seq_length)
@@ -94,30 +108,10 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
             batch_data[{j, {}}]:copy(data[ind_batch[j]]:sub(strt_batch[j], strt_batch[j]+seq_length-1))
             strt_batch[j] = strt_batch[j] + seq_length
             batch_label[j] = label[ind_batch[j]]
-            --[[
-            local ind = math.ceil(torch.uniform()*n_data)
-            local n_char = data[ind]:size(1)
-            local seq_start_ind = math.ceil(torch.uniform()*(n_char - seq_length))
-            batch_data[{j, {}}]:copy(data[ind]:sub(seq_start_ind, seq_start_ind+seq_length-1))
-            batch_label[j] = label[ind]
-            --]]
-        end
+       end
         self.x_batches[i] = batch_data:clone()
         self.y_batches[i] = OneHot(n_class):forward(batch_label:clone())
     end
-
-    -- print(tmp)
-    -- io.read()
-
-    --[[
-    local ydata = data:clone()
-    ydata:sub(1,-2):copy(data:sub(2,-1))
-    ydata[-1] = data[1]
-    self.x_batches = data:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
-    self.nbatches = #self.x_batches
-    self.y_batches = ydata:view(batch_size, -1):split(seq_length, 2)  -- #rows = #batches
-    assert(#self.x_batches == #self.y_batches)
-    --]]
 
     -- lets try to be helpful here
     if self.nbatches < 50 then
@@ -142,10 +136,19 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
 
     self.split_sizes = {self.ntrain, self.nval, self.ntest}
     self.batch_ix = {0,0,0}
+    self.test_batch_ix = 0
 
     print(string.format('data load done. Number of data batches in train: %d, val: %d, test: %d', self.ntrain, self.nval, self.ntest))
     collectgarbage()
     return self
+end
+
+function CharSplitLMMinibatchLoader:next_test_data()
+    self.test_batch_ix = self.test_batch_ix + 1
+    if self.test_batch_ix > #self.test_y then
+        self.test_batch_ix = 1
+    end
+    return self.test_x[self.test_batch_ix], self.test_y[self.test_batch_ix]
 end
 
 function CharSplitLMMinibatchLoader:reset_batch_pointer(split_index, batch_index)
@@ -175,21 +178,17 @@ end
 -- *** STATIC method ***
 function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
     local timer = torch.Timer()
-
     print('loading text file...')
-    --#local cache_len = 10000
-    -- local rawdata
-    -- local tot_len = 0
-    --#f = io.open(in_textfile, "r")
 
     -- create vocabulary if it doesn't exist yet
     print('creating vocabulary mapping...')
     -- record all characters to a set
     local ordered = {}
     local lowercase = 'abcdefghijklmnopqrstuvwxyz'
-    for c in lowercase .. string.upper(lowercase) do
+    for c in (lowercase .. string.upper(lowercase)):gmatch"." do
         ordered[#ordered+1] = c
     end
+    table.sort(ordered)
     local n_line = 0
     local n_chars = {}
     for line in io.lines(in_textfile) do
@@ -206,8 +205,6 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
     for i, char in ipairs(ordered) do
         vocab_mapping[char] = i
     end
-    print(vocab_mapping)
-    io.read()
     -- construct a tensor with all the data
     print('putting data into tensor...')
     --local data = torch.ByteTensor(tot_len) -- store it into 1D first, then rearrange
