@@ -3,6 +3,8 @@ require 'nn'
 require 'nngraph'
 require 'optim'
 require 'lfs'
+require 'cudnn'
+require 'cunn'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -16,7 +18,7 @@ cmd:text()
 cmd:text('Train a character-level language model')
 cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-gpuid',-1,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-data_dir','data/test')
 cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
@@ -30,21 +32,22 @@ torch.manualSeed(opt.seed)
 
 checkpoint = torch.load(opt.model)
 protos = checkpoint.protos
-protos.rnn:evaluate()
-loader = checkpoint.loader
-print(loader)
 
-local current_state
 current_state = {}
-  for L = 1,checkpoint.opt.num_layers do
-       -- c and h for all layers
-       local h_init = torch.zeros(1, checkpoint.opt.rnn_size):double()
-       table.insert(current_state, h_init:clone())
-       if checkpoint.opt.model == 'lstm' then
-            table.insert(current_state, h_init:clone())
-       end
+for L = 1,checkpoint.opt.num_layers do
+   -- c and h for all layers
+   local h_init = torch.zeros(1, checkpoint.opt.rnn_size)
+   if opt.gpuid >= 0 then h_init = h_init:cuda() end
+   table.insert(current_state, h_init:clone())
+   if checkpoint.opt.model == 'lstm' then
+        table.insert(current_state, h_init:clone())
    end
-state_size = #current_state
+end
+ 
+if opt.gpuid >= 0 then
+    for k,v in pairs(protos) do v:cuda() end
+end
+
 
 local split_sizes = {0.90,0.05,0.05}
 loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
@@ -53,14 +56,18 @@ n_data = loader.test_n_data
 correct = 0.0
 total = 0.0
 
+protos.rnn:evaluate()
+
 for i = 1, n_data do
-    x, y = loader:next_test_data()
-    print(x)
+    local x, y = loader:next_test_data()
+    if opt.gpuid >= 0 then
+        x = x:float():cuda()
+    end
 
     local rnn_state = {[0] = current_state}
-    local final_pred = torch.Tensor(opt.n_class):fill(0)
+    local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
     for t = 1, x:size(1) do
-        local lst = protos.rnn:forward{torch.Tensor{x[t]}, unpack(rnn_state[t-1])}
+        local lst = protos.rnn:forward{torch.Tensor{x[t]}:cuda(), unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]

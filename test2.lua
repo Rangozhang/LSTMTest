@@ -12,12 +12,6 @@ local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
 
---[[
-
-        rnn_size    num_layers  dropout      lr     result
-          32            1          0        2e-3     
---]]
-
 -- there is a better one called llap
 cmd = torch.CmdLine()
 cmd:text()
@@ -39,7 +33,7 @@ cmd:option('-learning_rate_decay_after', 1,'in number of epochs, when to start d
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
-cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 1,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',10,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -145,17 +139,24 @@ else
     protos.criterion = nn.BCECriterion()
 end
 
+
+
 -- the initial state of the cell/hidden states
 init_state = {}
 for L=1,opt.num_layers do
     local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
-    if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
-    if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
+    if opt.gpuid >=0 then h_init = h_init:cuda() end
     table.insert(init_state, h_init:clone())
     if opt.model == 'lstm' then
         table.insert(init_state, h_init:clone())
     end
 end
+
+print(init_state)
+print("--------")
+u1, u2 = unpack(init_state)
+print(torch.type(u1.THNN))
+io.read()
 
 -- ship the model to the GPU if desired
 if opt.gpuid >= 0 and opt.opencl == 0 then
@@ -224,7 +225,6 @@ function eval_split(split_index, max_batches)
         -- forward pass
         for t=1,opt.seq_length do
             clones.rnn[t]:evaluate() -- for dropout proper functioning
-            print(rnn_state[t-1])
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
@@ -265,12 +265,18 @@ function feval(x)
         y = y:cl()
     end
     ------------------- forward pass -------------------
-    local rnn_state = {[0] = init_state_global}
+    local rnn_state = {[0] = init_state}
+    print(torch.type(rnn_state[0].THNN))
+    m1, m2 = unpack(rnn_state[0])
+    print(torch.type(m1.THNN))
+    io.read()
     local predictions = {}           -- softmax outputs
     local loss = 0
     for t=1,opt.seq_length do -- 1 to 50
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-        print(rnn_state[t-1])
+        u1, u2 = unpack(rnn_state[t-1])
+        print(torch.type(u1.THNN))
+        io.read()
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output

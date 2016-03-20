@@ -4,7 +4,7 @@ import string
 import math
 
 n_class = 10
-n_data = 1000
+n_data = 10000
 f = open('gt.txt','w')
 f2 = open('input.txt', 'w')
 for i in xrange(1,n_class+1):
