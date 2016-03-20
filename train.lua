@@ -224,7 +224,6 @@ function eval_split(split_index, max_batches)
         -- forward pass
         for t=1,opt.seq_length do
             clones.rnn[t]:evaluate() -- for dropout proper functioning
-            print(rnn_state[t-1])
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
@@ -270,7 +269,6 @@ function feval(x)
     local loss = 0
     for t=1,opt.seq_length do -- 1 to 50
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-        print(rnn_state[t-1])
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
