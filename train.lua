@@ -28,7 +28,7 @@ cmd:text('Options')
 cmd:option('-data_dir','data/test','data directory. Should contain the file input.txt with input data')
 -- model params
 cmd:option('-rnn_size', 32, 'size of LSTM internal state')
-cmd:option('-num_layers', 1, 'number of layers in the LSTM')
+cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
@@ -40,7 +40,7 @@ cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',10,'number of full passes through the training data')
+cmd:option('-max_epochs',5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -49,7 +49,7 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',50,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every',3000,'every how many iterations should we evaluate on validation data?')
+cmd:option('-eval_val_every', 3 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
@@ -328,8 +328,14 @@ local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
+local epoch = 0
 for i = 1, iterations do
-    local epoch = i / loader.ntrain
+    local new_epoch = math.floor(i / loader.ntrain)
+    local is_new_epoch = false
+    if new_epoch > epoch then 
+        epoch = new_epoch
+        is_new_epoch = true
+    end
 
     local timer = torch.Timer()
     local _, loss = optim.rmsprop(feval, params, optim_state)
@@ -348,12 +354,12 @@ for i = 1, iterations do
     end
 
     -- every now and then or on last iteration
-    if i % opt.eval_val_every == 0 or i == iterations then
+    if is_new_epoch and epoch % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
         val_losses[i] = val_loss
 
-        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/lm_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
@@ -369,7 +375,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
+        print(string.format("%d/%d (epoch %d), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
     end
    
     if i % 10 == 0 then collectgarbage() end

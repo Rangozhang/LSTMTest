@@ -5,6 +5,7 @@ require 'optim'
 require 'lfs'
 require 'cudnn'
 require 'cunn'
+require 'xlua'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -55,10 +56,13 @@ n_data = loader.test_n_data
 
 correct = 0.0
 total = 0.0
+local accuracy_for_each_class = torch.Tensor(opt.n_class):fill(0)
+local n_data_for_each_class = accuracy_for_each_class:clone()
 
 protos.rnn:evaluate()
 
 for i = 1, n_data do
+    xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
     if opt.gpuid >= 0 then
         x = x:float():cuda()
@@ -71,20 +75,27 @@ for i = 1, n_data do
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]
-        print(prediction)
+        --print(prediction)
         final_pred = final_pred + prediction
     end
     final_pred = final_pred/x:size(1)
     _, res_rank = torch.sort(final_pred)
     res_y = res_rank[#res_rank]
-    print(final_pred)
-    print(y)
-    print(res_y)
+    --print(final_pred)
+    --print(y)
+    --print(res_y)
     total = total + 1
+    n_data_for_each_class[y] = n_data_for_each_class[y] + 1
     if y == res_y then
         correct = correct + 1
+        accuracy_for_each_class[y] = accuracy_for_each_class[y] + 1
     end
 end
+
+accuracy_for_each_class = torch.cdiv(accuracy_for_each_class, n_data_for_each_class)
+
+print("Accuracy for each class:")
+print(accuracy_for_each_class)
 
 print("Accuracy:")
 print(correct/total)

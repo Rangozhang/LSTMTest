@@ -1,9 +1,7 @@
-import os, sys
 import random
 import string
-import math
 
-n_data = 5
+n_data = 100
 f = open('gt.txt','r')
 f2 = open('test.txt', 'w')
 f3 = open('input.txt','r')
