@@ -25,6 +25,7 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
+cmd:option('-OverlappingData', false)
 cmd:text()
 
 -- parse input params
@@ -64,6 +65,11 @@ protos.rnn:evaluate()
 for i = 1, n_data do
     xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
+    print("-----------Data----------")
+    print(x)
+    print("-----------Groundtruth----------")
+    print(y)
+
     if opt.gpuid >= 0 then
         x = x:float():cuda()
     end
@@ -79,10 +85,9 @@ for i = 1, n_data do
         final_pred = final_pred + prediction
     end
     final_pred = final_pred/x:size(1)
-    _, res_rank = torch.sort(final_pred)
+    res_val_rank, res_rank = torch.sort(final_pred)
     res_y = res_rank[#res_rank]
     --print(final_pred)
-    --print(y)
     --print(res_y)
     total = total + 1
     n_data_for_each_class[y] = n_data_for_each_class[y] + 1
@@ -90,6 +95,7 @@ for i = 1, n_data do
         correct = correct + 1
         accuracy_for_each_class[y] = accuracy_for_each_class[y] + 1
     end
+    
 end
 
 accuracy_for_each_class = torch.cdiv(accuracy_for_each_class, n_data_for_each_class)

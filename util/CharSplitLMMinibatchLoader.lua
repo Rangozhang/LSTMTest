@@ -5,6 +5,18 @@ require 'util.OneHot'
 local CharSplitLMMinibatchLoader = {}
 CharSplitLMMinibatchLoader.__index = CharSplitLMMinibatchLoader
 
+function split(inputstr, sep)
+    if sep == nil then
+        sep = "%s"
+    end
+    local t={} ; i=1
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        t[i] = str
+        i = i + 1
+    end
+    return t
+end
+
 function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches)
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
     local self = {}
@@ -49,11 +61,11 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
 
     -----------------------------------------------
     -- for test set
-    local test_input_file = path.join(data_dir, 'test.txt')
+    local test_input_file = path.join(data_dir, 'overlapping_test.txt')
     local test_tensor_file = path.join(data_dir, 'test_data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local test_run_prepro = false
+    local test_run_prepro = true 
     if not ((path.exists(vocab_file) and path.exists(test_tensor_file))) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and test_data.t7 do not exist. Running preprocessing...')
@@ -217,14 +229,32 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
         cur_line = cur_line+1
         local data_per_line = torch.Tensor(n_chars[cur_line])
         local tmp_n = 0
+        string_list = split(line, ' ')
+        data_sequence = string_list[#string_list]
+        for char in data_sequence:gmatch'.' do
+            tmp_n = tmp_n + 1
+            data_per_line[tmp_n] = vocab_mapping[char]
+        end
+        --print(data_per_line)
+        --[[
         for char in line:gmatch'[%a_]' do
            tmp_n = tmp_n + 1 
            data_per_line[tmp_n] = vocab_mapping[char]
         end
+        --]]
         data[cur_line] = data_per_line:clone()
+        local label_per_line = torch.Tensor(#string_list-1)
+        for label_ind = 1, #string_list-1 do
+            label_per_line[label_ind] = tonumber(string_list[label_ind])
+        end
+        --print(label_per_line)
+        --io.read()
+        label[cur_line] = label_per_line:clone()
+        --[[
         for char in line:gmatch'%d' do
            label[cur_line] = (label[cur_line] or 0)*10 + tonumber(char)
         end  
+        --]]
         --[[
         --local currlen = 0
         --rawdata = f:read(cache_len)
