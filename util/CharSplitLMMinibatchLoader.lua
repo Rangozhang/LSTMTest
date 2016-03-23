@@ -17,7 +17,7 @@ function split(inputstr, sep)
     return t
 end
 
-function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches)
+function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches, isOverlappingData)
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
     local self = {}
     self.n_class = n_class
@@ -61,11 +61,17 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
 
     -----------------------------------------------
     -- for test set
-    local test_input_file = path.join(data_dir, 'overlapping_test.txt')
+    if isOverlappingData then
+        test_file = 'overlapping_test.txt'
+    else
+        test_file = 'test.txt'
+    end
+
+    local test_input_file = path.join(data_dir, test_file)
     local test_tensor_file = path.join(data_dir, 'test_data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local test_run_prepro = true 
+    local test_run_prepro = true
     if not ((path.exists(vocab_file) and path.exists(test_tensor_file))) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and test_data.t7 do not exist. Running preprocessing...')

@@ -25,7 +25,11 @@ for ind, line in enumerate(grammar_list):
         data_line = ''
         flag = False
         action2Ind = 0
-        action2_label = random.randint(1,10)
+        label_flag = False
+        while not label_flag:
+            action2_label = random.randint(1,10)
+            if action2_label != int(class_list[ind]):
+                label_flag = True
         action2 = grammar_list[action2_label-1]
         while not flag:
             data_line = ''.join(random.sample(string.uppercase, random.randint(0,3)))
