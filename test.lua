@@ -6,6 +6,7 @@ require 'lfs'
 require 'cudnn'
 require 'cunn'
 require 'xlua'
+require 'gnuplot'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -54,6 +55,11 @@ end
 local split_sizes = {0.90,0.05,0.05}
 loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
 n_data = loader.test_n_data
+vocab_mapping = loader.vocab_mapping
+vocab = {}
+for k, v in pairs(vocab_mapping) do
+    vocab[v] = k
+end
 
 correct = 0.0
 total = 0.0
@@ -61,19 +67,32 @@ local accuracy_for_each_class = torch.Tensor(opt.n_class):fill(0)
 local n_data_for_each_class = accuracy_for_each_class:clone()
 local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
+local accuracy_1_ = 0.0
 
 protos.rnn:evaluate()
 
 for i = 1, n_data do
     xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
+    
+    --print("-----------Data----------")
+    --print(x)
+    --print(y)
     --[[
-    print("-----------Data----------")
-    print(x)
-    print("-----------Groundtruth----------")
+    ina = {'c', 'y', 'w', 'd', 'r', 'r', 'x', 'n', 'f', 'i', 'j'}
+    x = torch.Tensor(#ina)
+    for h = 1, #ina do
+        x[h] = vocab_mapping[ina[h]
+    end
+    
+    tmp_str = ""
+    for z = 1, x:size(1) do
+        tmp_str = tmp_str .. " " .. vocab[x[z]
+    end
+    print('------data------')
+    print(tmp_str)
     print(y)
     --]]
-
     if opt.gpuid >= 0 then
         x = x:float():cuda()
     end
@@ -85,15 +104,36 @@ for i = 1, n_data do
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]
-        --print(prediction)
-        final_pred = final_pred + prediction
+        tmp_str = vocab[x[t]] .. "\t"
+        for m = 1, prediction:size(2) do
+            tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
+        end
+        --print(tmp_str)
+        --final_pred = final_pred + prediction
+        for w = 1, opt.n_class do
+            final_pred[w] = math.max(final_pred[w], prediction[{1, w}])
+        end
     end
-    final_pred = final_pred/x:size(1)
+    --final_pred = final_pred/x:size(1)
     --print(final_pred)
+    --io.read()
+    --[[
+    tmp_str = "Total:\t"
+    for m = 1, final_pred:size(1) do
+        tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
+    end
+    print(tmp_str)
+    io.read()
     --print(final_pred:sum())
     --io.read()
     --print(res_y)
+    --]]
     total = total + 1
+    k_ = 0
+    increasing_ind = torch.Tensor(opt.n_class):apply(function(increasing_ind)
+        k_ = k_ + 1
+        return k_
+    end)
     if not opt.OverlappingData then
         fail_list = {}
         fail_list_ind = 1
@@ -114,16 +154,18 @@ for i = 1, n_data do
             print(y .. ':' .. res_y)
         end
     else
-        res_y = final_pred:gt(0.1)
-        --print(res_y)
+        res_y = increasing_ind:maskedSelect(final_pred:gt(0.5):byte())
         res1 = (res_y:eq(y[1]):sum() >= 1)
         res2 = (res_y:eq(y[2]):sum() >= 1)
         --print(res1)
         --print(res2)
-        if res1 and res2 and #res_y == 2 then
-            accuracy_2 = accuracy_2 + 1
-            accuracy_1 = accuracy_1 + 1
-        else if res1 or res2 then
+        if res1 and res2 then
+            accuracy_1_ = accuracy_1_ + 1
+            if #res_y == 2 then
+                accuracy_2 = accuracy_2 + 1
+                accuracy_1 = accuracy_1 + 1
+            end
+        else if res1 or res2 and #res_y == 2 then
             accuracy_1 = accuracy_1 + 1
         end
         end
@@ -141,6 +183,8 @@ if not opt.OverlappingData then
 else 
     print("Accuracy of exact correct:")
     print(accuracy_2 / total)
-    print("Accuracy of only one is correct or two are correct but there are other false positive")
+    print("Accuracy of only one is correct or two are correct")
     print(accuracy_1 / total)
+    print("Accracy as long as the result consists of the two classes")
+    print(accuracy_1_ / total)
 end

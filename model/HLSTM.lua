@@ -10,11 +10,14 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, group)
     table.insert(inputs, nn.Identity()()) -- prev_c[L]
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
   end
+  table.insert(inputs, nn.Identity()()) -- group_ind
+    
+  local group_ind = OneHot(group)(inputs[#inputs])
 
   local x, input_size_L
   local outputs = {}
   for L = 1,n do
-    -- c,h from previos timesteps
+    -- c,h from previous timesteps
     local prev_h = inputs[L*2+1]
     local prev_c = inputs[L*2]
     -- the input to this layer
