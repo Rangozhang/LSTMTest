@@ -109,12 +109,16 @@ for i = 1, n_data do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
         --print(tmp_str)
-        --final_pred = final_pred + prediction
+        -- Take average
+        final_pred = final_pred + prediction
+        --[[
+        -- Take Maximum
         for w = 1, opt.n_class do
             final_pred[w] = math.max(final_pred[w], prediction[{1, w}])
         end
+        --]]
     end
-    --final_pred = final_pred/x:size(1)
+    final_pred = final_pred/x:size(1)
     --print(final_pred)
     --io.read()
     --[[
