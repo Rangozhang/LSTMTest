@@ -17,7 +17,7 @@ function split(inputstr, sep)
     return t
 end
 
-function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches, isOverlappingData)
+function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches, isOverlappingData, isBatchEvenly)
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
     local self = {}
     self.n_class = n_class
@@ -104,13 +104,22 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     local data = saveddata.data
     local label = saveddata.label
     local n_data = saveddata.n_data
+    local n_data_per_class = n_data / n_class
+    self.n_data = n_data
 
     self.x_batches = {}
     self.y_batches = {}
     ind_batch = torch.Tensor(batch_size)
+    local n_data_class_batch = math.ceil(batch_size / n_class)
     for j = 1, batch_size do
-        ind_batch[j] = math.ceil(torch.uniform()*n_data)
+        if isBatchEvenly then
+            ind_batch[j] = n_data_per_class * math.floor((j-1)/n_data_class_batch) + math.ceil(torch.uniform()*n_data_per_class)
+        else
+            ind_batch[j] = math.ceil(torch.uniform()*n_data)
+        end
     end
+    --print(ind_batch)
+    --io.read()
     strt_batch = torch.Tensor(batch_size):fill(1)
     for i = 1, self.nbatches do
         local batch_data = torch.Tensor(batch_size, seq_length)
@@ -119,7 +128,14 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
             local n_char = data[ind_batch[j]]:size(1)
             if n_char < strt_batch[j] + seq_length then
                 strt_batch[j] = 1
-                ind_batch[j] = math.ceil(torch.uniform()*n_data)
+                if isBatchEvenly then
+                    ind_batch[j] = ind_batch[j] + 1
+                    if ind_batch[j] > n_data_per_class then
+                        ind_batch[j] = n_data_per_class * math.floor((j-1)/n_data_class_batch) + math.ceil(torch.uniform()*n_data_per_class)
+                    end
+                else
+                    ind_batch[j] = math.ceil(torch.uniform()*n_data)
+                end
             end
             --tmp[ind_batch[j]] = tmp[ind_batch[j]] + 1
 
@@ -191,6 +207,59 @@ function CharSplitLMMinibatchLoader:next_batch(split_index)
     if split_index == 2 then ix = ix + self.ntrain end -- offset by train set size
     if split_index == 3 then ix = ix + self.ntrain + self.nval end -- offset by train + val
     return self.x_batches[ix], self.y_batches[ix]
+end
+
+
+function CharSplitLMMinibatchLoader:next_batch_wrt_label(split_index, cur_label)
+    if self.split_sizes[split_index] == 0 then
+        -- perform a check here to make sure the user isn't screwing something up
+        local split_names = {'train', 'val', 'test'}
+        print('ERROR. Code requested a batch for split ' .. split_names[split_index] .. ', but this split has no data.')
+        os.exit() -- crash violently
+    end
+    -- split_index is integer: 1 = train, 2 = val, 3 = test
+    self.batch_ix[split_index] = self.batch_ix[split_index] + 1
+    if self.batch_ix[split_index] > self.split_sizes[split_index] then
+        self.batch_ix[split_index] = 1 -- cycle around to beginning
+    end
+    -- pull out the correct next batch
+    local ix = self.batch_ix[split_index]
+    if split_index == 2 then ix = ix + self.ntrain end -- offset by train set size
+    if split_index == 3 then ix = ix + self.ntrain + self.nval end -- offset by train + val
+    x_batch = nil
+    y_batch = nil
+    local y = self.y_batches[ix]
+    local tmp_y = torch.Tensor(y:size(1)):fill(0)
+    for y_ind = 1, y:size(1) do
+        if y[y_ind][cur_label] == 1 then
+               tmp_y[y_ind] = 1
+        else
+               tmp_y[y_ind] = 0
+        end
+    end
+    y = tmp_y
+    for cls_ind = 1, self.n_class do
+        local tmp_y_ = torch.Tensor(y:size(1)):fill(0)
+        for y_ind = 1, y:size(1) do
+            if self.y_batches[ix][y_ind][cls_ind] == 1 then
+                   tmp_y_[y_ind] = 1
+            else
+                   tmp_y_[y_ind] = 0
+            end
+        end
+        local ind = torch.range(1, y:size(1)):maskedSelect(tmp_y_:eq(1):byte()):long()
+        if cls_ind ~= cur_label then
+            ind = ind[{{1, math.ceil(self.batch_size/self.n_class^2)}}]
+        end
+        if x_batch then
+            x_batch = torch.cat(x_batch, self.x_batches[ix]:index(1, ind), 1)
+            y_batch = torch.cat(y_batch, y:index(1, ind), 1)
+        else
+            x_batch = self.x_batches[ix]:index(1, ind)
+            y_batch = y:index(1, ind)
+        end
+    end
+    return x_batch, y_batch
 end
 
 -- *** STATIC method ***

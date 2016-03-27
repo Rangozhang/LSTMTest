@@ -32,14 +32,14 @@ cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',2e-2,'learning rate')
+cmd:option('-learning_rate',5e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_after', 1,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
-cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 4,'number of timesteps to unroll for')
-cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',5,'number of full passes through the training data')
+cmd:option('-batch_size', 490,'number of sequences to train on in parallel')
+cmd:option('-max_epochs',2,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -47,8 +47,8 @@ cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
-cmd:option('-print_every',50,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 3 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-print_every',100,'how many steps/minibatches between printing out the loss')
+cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
@@ -102,7 +102,7 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- create the data loader class
-local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
+local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, 512* opt.n_class / 2, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, false, true)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -132,7 +132,7 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos_list = {}    -- a list of protos for each class
     for i = 1, opt.n_class do
-        protos = {}
+        local protos = {}
         if opt.model == 'lstm' then
             protos.rnn = LSTM.lstm(vocab_size, 1, opt.rnn_size, opt.num_layers, opt.dropout) --binary output for each LSTM
         --[[
@@ -144,23 +144,32 @@ else
         --]]
         end
         protos.criterion = nn.BCECriterion()
-        protos_list[i] = protos
+        table.insert(protos_list, protos)
     end
 end
 
--- the initial state of the cell/hidden states
-init_state = {}
-for L=1,opt.num_layers do
-    local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
-    if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
-    if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
-    table.insert(init_state, h_init:clone())
-    if opt.model == 'lstm' then
-        table.insert(init_state, h_init:clone())
-    end
-end
+
 
 for protos_ind = 1, opt.n_class do
+--protos_ind = 2
+--while true do
+    ----[[
+    if protos_ind == 10 then
+        opt.batch_size = 98
+    end
+    --]]
+     -- the initial state of the cell/hidden states
+    init_state = {}
+    for L=1,opt.num_layers do
+        local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
+        if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
+        if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
+        table.insert(init_state, h_init:clone())
+        if opt.model == 'lstm' then
+            table.insert(init_state, h_init:clone())
+        end
+    end   
+    protos = protos_list[protos_ind]
 
     -- ship the model to the GPU if desired
     if opt.gpuid >= 0 and opt.opencl == 0 then
@@ -217,6 +226,15 @@ for protos_ind = 1, opt.n_class do
         for i = 1,n do -- iterate over batches in the split
             -- fetch a batch
             local x, y = loader:next_batch(split_index)
+            tmp_y = torch.Tensor(y:size(1)):fill(0)
+            for y_ind = 1, y:size(1) do
+                if y[y_ind][protos_ind] == 1 then
+                    tmp_y[y_ind] = 1
+                else
+                    tmp_y[y_ind] = 0
+                end
+            end
+            y = tmp_y
             if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
                 -- have to convert to float because integers can't be cuda()'d
                 x = x:float():cuda()
@@ -258,7 +276,42 @@ for protos_ind = 1, opt.n_class do
         grad_params:zero()
 
         ------------------ get minibatch -------------------
-        local x, y = loader:next_batch(1)
+        --[[
+        total_x = torch.Tensor(1, opt.seq_length):fill(0)
+        total_y = torch.Tensor(1):fill(0)
+        while true do
+        --]]
+        print(protos_ind)
+        local x, y = loader:next_batch_wrt_label(1, protos_ind)
+        --[[
+        local tmp_y = torch.Tensor(y:size(1)):fill(0)
+        for y_ind = 1, y:size(1) do
+            if y[y_ind][protos_ind] == 1 then
+                tmp_y[y_ind] = 1
+            else
+                tmp_y[y_ind] = 0
+            end
+        end
+        y = tmp_y
+        --]]
+            --[[
+            pos_ind = torch.range(1, y:size(1)):maskedSelect(y:byte()):long()
+            if pos_ind:nDimension() ~= 0 then
+                neg_ind = torch.range(1, y:size(1)):maskedSelect(y:eq(0):byte()):long()[{{1, pos_ind:size(1)}}]
+                total_x = torch.cat(total_x, torch.cat(x:index(1, pos_ind), x:index(1, neg_ind), 1), 1)
+                total_y = torch.cat(total_y, torch.cat(y:index(1, pos_ind), y:index(1, neg_ind), 1), 1)
+                if (total_y:size(1) >= opt.batch_size) then
+                    break
+                end
+                --print(total_x)
+                --print(total_y)
+                --io.read()
+            end
+        end
+        really_range = torch.range(2, opt.batch_size+1):long()
+        y = total_y:index(1, really_range)
+        x = total_x:index(1, really_range)
+        --]]
         if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
             x = x:float():cuda()
@@ -361,10 +414,10 @@ for protos_ind = 1, opt.n_class do
         -- every now and then or on last iteration
         if is_new_epoch and epoch % opt.eval_val_every == 0 or i == iterations then
             -- evaluate loss on validation data
-            local val_loss = eval_split(2) -- 2 = validation
+            local val_loss = 0 --eval_split(2) -- 2 = validation
             val_losses[i] = val_loss
 
-            local savefile = string.format('%s/lm_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+            local savefile = string.format('%s/%d_lm_%s_epoch%d.t7', opt.checkpoint_dir, protos_ind, opt.savefile, epoch)
             print('saving checkpoint to ' .. savefile)
             local checkpoint = {}
             checkpoint.protos = protos
