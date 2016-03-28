@@ -28,6 +28,7 @@ cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
 cmd:option('-OverlappingData', false)
+cmd:option('-draw', true)
 cmd:text()
 
 -- parse input params
@@ -106,6 +107,9 @@ for i = 1, n_data do
         x = x:float():cuda()
     end
 
+    draw1 = torch.Tensor(x:size(1)):fill(0)
+    draw2 = torch.Tensor(x:size(1)):fill(0)
+    
     local pred = torch.Tensor(x:size(1), opt.n_class):fill(0):cuda()
     local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
 
@@ -117,6 +121,13 @@ for i = 1, n_data do
             rnn_state[t] = {}
             for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
             prediction = lst[#lst]
+            if protos_ind == y[1] then
+                draw1[t] = prediction[1][1]
+            else
+                if opt.OverlappingData and protos_ind == y[2] then
+                    draw2[t] = prediction[1][1]
+                end
+            end
             tmp_str = vocab[x[t]] .. "\t"
             for m = 1, prediction:size(2) do
                 tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
@@ -125,6 +136,23 @@ for i = 1, n_data do
             pred[t][protos_ind] = pred[t][protos_ind] + prediction[1][1]
             final_pred[protos_ind] = final_pred[protos_ind] + prediction[1][1]
         end
+    end
+    if opt.draw then
+        x_axis = torch.range(1, x:size(1))
+        if not opt.OverlappingData then
+            gnuplot.pngfigure('./image_pureData_nonexclusively/instance' .. tostring(i) .. '.png')
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
+        else
+            gnuplot.pngfigure('./image_nonexclusively/instance' .. tostring(i) .. '.png')
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'}, {'class '..tostring(y[2]), x_axis, draw2, '~'})
+        end
+        x_str = 'set xtics ("'
+        for mm = 1, x:size(1)-1 do
+            x_str = x_str .. tostring(vocab[x[mm]]) .. '" ' .. tostring(mm) .. ', "'
+        end
+        x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
+        gnuplot.raw(x_str)
+        gnuplot.plotflush()    
     end
     final_pred = final_pred/x:size(1)
     for r = 1, x:size(1) do

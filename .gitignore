@@ -10,7 +10,11 @@ cv5
 cv5/*
 image
 image/*
+image_pureData
+image_pureData/*
 cv_unexclu_uneven
 cv_unexclu_uneven/*
 image_nonexclusively
 image_nonexclusively/*
+image_pureData_nonexclusively
+image_pureData_nonexclusively/*

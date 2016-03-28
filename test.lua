@@ -26,7 +26,8 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', true)
+cmd:option('-OverlappingData', false)
+cmd:option('-draw', true)
 cmd:text()
 
 -- parse input params
@@ -96,6 +97,9 @@ for i = 1, n_data do
     if opt.gpuid >= 0 then
         x = x:float():cuda()
     end
+    
+    draw1 = torch.Tensor(x:size(1)):fill(0)
+    draw2 = torch.Tensor(x:size(1)):fill(0)
 
     local rnn_state = {[0] = current_state}
     local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
@@ -104,11 +108,15 @@ for i = 1, n_data do
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]
+        draw1[t] = prediction[{1, y[1]}]
+        if opt.OverlappingData then
+            draw2[t] = prediction[{1, y[2]}]
+        end
         tmp_str = vocab[x[t]] .. "\t"
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
-        --print(tmp_str)
+        print(tmp_str)
         -- Take average
         final_pred = final_pred + prediction
         --[[
@@ -118,20 +126,35 @@ for i = 1, n_data do
         end
         --]]
     end
+    if opt.draw then
+        x_axis = torch.range(1, x:size(1))
+        if not opt.OverlappingData then
+            gnuplot.pngfigure('./image_pureData/instance' .. tostring(i) .. '.png')
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
+        else
+            gnuplot.pngfigure('./image/instance' .. tostring(i) .. '.png')
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'}, {'class '..tostring(y[2]), x_axis, draw2, '~'})
+        end
+        x_str = 'set xtics ("'
+        for mm = 1, x:size(1)-1 do
+            x_str = x_str .. tostring(vocab[x[mm]]) .. '" ' .. tostring(mm) .. ', "'
+        end
+        x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
+        gnuplot.raw(x_str)
+        gnuplot.plotflush()
+    end
     final_pred = final_pred/x:size(1)
     --print(final_pred)
     --io.read()
-    --[[
     tmp_str = "Total:\t"
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
     end
     print(tmp_str)
-    io.read()
+    --io.read()
     --print(final_pred:sum())
     --io.read()
     --print(res_y)
-    --]]
     total = total + 1
     k_ = 0
     increasing_ind = torch.Tensor(opt.n_class):apply(function(increasing_ind)
