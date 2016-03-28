@@ -249,7 +249,7 @@ function CharSplitLMMinibatchLoader:next_batch_wrt_label(split_index, cur_label)
         end
         local ind = torch.range(1, y:size(1)):maskedSelect(tmp_y_:eq(1):byte()):long()
         if cls_ind ~= cur_label then
-            ind = ind[{{1, math.ceil(self.batch_size/self.n_class^2)}}]
+            ind = ind[{{1, math.ceil(self.batch_size/self.n_class)}}]
         end
         if x_batch then
             x_batch = torch.cat(x_batch, self.x_batches[ix]:index(1, ind), 1)

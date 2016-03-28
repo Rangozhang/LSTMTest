@@ -38,7 +38,7 @@ cmd:option('-learning_rate_decay_after', 1,'in number of epochs, when to start d
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 4,'number of timesteps to unroll for')
-cmd:option('-batch_size', 490,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 480,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',2,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -102,7 +102,8 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- create the data loader class
-local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, 512* opt.n_class / 2, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, false, true)
+-- 96 * opt.n_class / 2
+local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches) --, false, true)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -151,13 +152,8 @@ end
 
 
 for protos_ind = 1, opt.n_class do
---protos_ind = 2
+--protos_ind = 10
 --while true do
-    ----[[
-    if protos_ind == 10 then
-        opt.batch_size = 98
-    end
-    --]]
      -- the initial state of the cell/hidden states
     init_state = {}
     for L=1,opt.num_layers do
@@ -281,9 +277,10 @@ for protos_ind = 1, opt.n_class do
         total_y = torch.Tensor(1):fill(0)
         while true do
         --]]
-        print(protos_ind)
-        local x, y = loader:next_batch_wrt_label(1, protos_ind)
-        --[[
+        --local x, y = loader:next_batch_wrt_label(1, protos_ind)
+        
+        ----[[
+        local x, y = loader:next_batch(1)
         local tmp_y = torch.Tensor(y:size(1)):fill(0)
         for y_ind = 1, y:size(1) do
             if y[y_ind][protos_ind] == 1 then
@@ -293,7 +290,7 @@ for protos_ind = 1, opt.n_class do
             end
         end
         y = tmp_y
-        --]]
+        --[[
             --[[
             pos_ind = torch.range(1, y:size(1)):maskedSelect(y:byte()):long()
             if pos_ind:nDimension() ~= 0 then
@@ -312,7 +309,7 @@ for protos_ind = 1, opt.n_class do
         y = total_y:index(1, really_range)
         x = total_x:index(1, really_range)
         --]]
-        if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
+            if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
             x = x:float():cuda()
             y = y:float():cuda()

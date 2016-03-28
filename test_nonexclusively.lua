@@ -18,6 +18,7 @@ local LSTM = require 'model.LSTM'
 cmd = torch.CmdLine()
 cmd:text()
 cmd:text('Train a character-level language model')
+cmd:argument('-dir', 'directory of the models')
 cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -26,7 +27,7 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', true)
+cmd:option('-OverlappingData', false)
 cmd:text()
 
 -- parse input params
@@ -35,7 +36,7 @@ torch.manualSeed(opt.seed)
 
 protos_list = {}
 for i = 1, opt.n_class do
-    checkpoint = torch.load('cv_unexclu_uneven/'..tostring(i)..'_'..opt.model)
+    checkpoint = torch.load(opt.dir..'/'..tostring(i)..'_'..opt.model)
     table.insert(protos_list, checkpoint.protos)
 end
 
@@ -74,6 +75,8 @@ local n_data_for_each_class = accuracy_for_each_class:clone()
 local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
+local accuracy_tmp = 0.0
+local accuracy_tmp2 = 0.0
 
 for i = 1, #protos_list do
     protos_list[i].rnn:evaluate()
@@ -161,6 +164,16 @@ for i = 1, n_data do
             print(y .. ':' .. res_y)
         end
     else
+        _, res_rank = torch.sort(final_pred)
+        res_y_tmp = res_rank[-1]
+        if res_y_tmp == y[1] or res_y_tmp == y[2] then
+            accuracy_tmp = accuracy_tmp + 1
+            res_y_tmp2 = res_rank[-2]
+            if res_y_tmp2 == y[1] or res_y_tmp2 == y[2] then
+                accuracy_tmp2 = accuracy_tmp2 + 1
+            end
+        end
+        
         res_y = torch.range(1, opt.n_class):maskedSelect(final_pred:gt(0.5):byte())
         res1 = (res_y:eq(y[1]):sum() >= 1)
         res2 = (res_y:eq(y[2]):sum() >= 1)
@@ -192,4 +205,8 @@ else
     print(accuracy_1 / total)
     print("Accracy as long as the result consists of the two classes")
     print(accuracy_1_ / total)
+    print("Accuracy that one of the groundtruth has the highest prediction value")
+    print(accuracy_tmp / total)
+    print("Accuracy that two groundtruth have the highest prediction value")
+    print(accuracy_tmp2 / total)
 end
