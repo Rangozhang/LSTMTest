@@ -33,14 +33,14 @@ cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',1e-3,'learning rate')
+cmd:option('-learning_rate',1e-4,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
-cmd:option('-dropout',0.7,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 4,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 5,'number of full passes through the training data')
+cmd:option('-max_epochs', 100,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -64,6 +64,8 @@ torch.manualSeed(opt.seed)
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
+
+trainLogger = optim.Logger('train.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -292,7 +294,7 @@ function feval(x)
             max_mat:scatter(2, max_ind, 1)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
-        print(doutput_t)
+        --print(doutput_t)
         table.insert(drnn_state[t], doutput_t)
         -- still don't know why dlst[1] is empty
         local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
@@ -336,6 +338,15 @@ print("start training:")
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
+--[[
+local optimState = {
+    learningRate = opt.learningRate,
+    learningRateDecay = 0.0,
+                    momentum = opt.momentum,
+                         dampening = 0.0,
+                              weightDecay = opt.weightDecay
+}
+--]]
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
@@ -354,6 +365,14 @@ for i = 1, iterations do
 
     local train_loss = loss[1] -- the loss is inside a list, pop it
     train_losses[i] = train_loss
+
+    trainLogger:add{
+        ['Loss'] = train_loss
+    }
+    trainLogger:style{'-'}
+    trainLogger.showPlot = false
+    trainLogger:plot()
+    os.execute('convert -density 200 train.log.eps train.png')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then

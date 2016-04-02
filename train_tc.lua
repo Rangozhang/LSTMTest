@@ -1,3 +1,4 @@
+
 require 'nn'
 require 'nngraph'
 require 'optim'
@@ -10,6 +11,12 @@ local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
+
+--[[
+
+        rnn_size    num_layers  dropout      lr     result
+          32            1          0        2e-3     
+--]]
 
 -- there is a better one called llap
 cmd = torch.CmdLine()
@@ -26,14 +33,14 @@ cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',2e-2,'learning rate')
+cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
-cmd:option('-learning_rate_decay_after', 1,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
-cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 4,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',5,'number of full passes through the training data')
+cmd:option('-max_epochs', 100,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -41,13 +48,14 @@ cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
-cmd:option('-print_every',50,'how many steps/minibatches between printing out the loss')
+cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every', 3 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
-cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',3,'which gpu to use. -1 = use CPU')
 cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
+cmd:option('-lossfilter', 0, '1: only backward through the ground truth entry 2: cutting plane algorithm')
 cmd:text()
 
 -- parse input params
@@ -56,6 +64,8 @@ torch.manualSeed(opt.seed)
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
+
+trainLogger = optim.Logger('train.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -276,7 +286,17 @@ function feval(x)
     for t=opt.seq_length,1,-1 do
         -- backprop through loss, and softmax/linear
         local doutput_t = clones.criterion[t]:backward(predictions[t], y)
+        if opt.lossfilter == 1 then
+            doutput_t = torch.cmul(doutput_t, y)
+        elseif opt.lossfilter == 2 then 
+            _, max_ind = torch.abs(y-predictions[t]):max(2)
+            max_mat = predictions[t]:clone():fill(0)
+            max_mat:scatter(2, max_ind, 1)
+            doutput_t = torch.cmul(doutput_t, max_mat)
+        end
+        --print(doutput_t)
         table.insert(drnn_state[t], doutput_t)
+        -- still don't know why dlst[1] is empty
         local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
         -- dlst is dlst_dI, need to feed to the previous time step
         -- The following two results are the same
@@ -318,10 +338,19 @@ print("start training:")
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
+--[[
+local optimState = {
+    learningRate = opt.learningRate,
+    learningRateDecay = 0.0,
+                    momentum = opt.momentum,
+                         dampening = 0.0,
+                              weightDecay = opt.weightDecay
+}
+--]]
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
-local epoch = 0
+local epoch = 1
 for i = 1, iterations do
     local new_epoch = math.floor(i / loader.ntrain)
     local is_new_epoch = false
@@ -337,9 +366,17 @@ for i = 1, iterations do
     local train_loss = loss[1] -- the loss is inside a list, pop it
     train_losses[i] = train_loss
 
+    trainLogger:add{
+        ['Loss'] = train_loss
+    }
+    trainLogger:style{'-'}
+    trainLogger.showPlot = false
+    trainLogger:plot()
+    os.execute('convert -density 200 train.log.eps train.png')
+
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
-        if epoch >= opt.learning_rate_decay_after then
+        if epoch % opt.learning_rate_decay_every == 0 then
             local decay_factor = opt.learning_rate_decay
             optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
             print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
