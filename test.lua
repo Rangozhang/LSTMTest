@@ -10,7 +10,7 @@ require 'gnuplot'
 
 require 'util.OneHot'
 require 'util.misc'
-local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
+local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 

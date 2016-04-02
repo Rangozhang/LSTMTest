@@ -5,7 +5,7 @@ require 'lfs'
 
 require 'util.OneHot'
 require 'util.misc'
-local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
+local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
@@ -103,7 +103,7 @@ end
 
 -- create the data loader class
 -- 96 * opt.n_class / 2
-local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches) --, false, true)
+local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches) --, false, true)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)

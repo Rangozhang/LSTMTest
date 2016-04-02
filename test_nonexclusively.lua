@@ -10,7 +10,7 @@ require 'gnuplot'
 
 require 'util.OneHot'
 require 'util.misc'
-local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
+local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 
@@ -61,7 +61,7 @@ end
 
 
 local split_sizes = {0.90,0.05,0.05}
-loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
+loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
 n_data = loader.test_n_data
 vocab_mapping = loader.vocab_mapping
 vocab = {}

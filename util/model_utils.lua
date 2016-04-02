@@ -1,4 +1,3 @@
-
 -- adapted from https://github.com/wojciechz/learning_to_execute
 -- utilities for combining/flattening parameters in a model
 -- the code in this script is more general than it needs to be, which is 

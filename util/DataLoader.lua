@@ -2,8 +2,8 @@ require 'util.OneHot'
 -- Modified from https://github.com/oxford-cs-ml-2015/practical6
 -- the modification included support for train/val/test splits
 
-local CharSplitLMMinibatchLoader = {}
-CharSplitLMMinibatchLoader.__index = CharSplitLMMinibatchLoader
+local DataLoader = {}
+DataLoader.__index = DataLoader 
 
 function split(inputstr, sep)
     if sep == nil then
@@ -17,13 +17,13 @@ function split(inputstr, sep)
     return t
 end
 
-function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches, isOverlappingData, isBatchEvenly)
+function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_class, nbatches, isOverlappingData, isBatchEvenly)
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
     local self = {}
     self.n_class = n_class
     self.nbatches = nbatches or 1000
 
-    setmetatable(self, CharSplitLMMinibatchLoader)
+    setmetatable(self, DataLoader)
 
     local input_file = path.join(data_dir, 'input.txt')
     local vocab_file = path.join(data_dir, 'vocab.t7')
@@ -49,7 +49,7 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     if run_prepro then
         -- construct a tensor with all the data, and vocab file
         print('one-time setup: preprocessing input text file ' .. input_file .. '...')
-        CharSplitLMMinibatchLoader.text_to_tensor(input_file, vocab_file, tensor_file)
+        DataLoader.text_to_tensor(input_file, vocab_file, tensor_file)
     end
 
     print('loading data files...')
@@ -71,7 +71,7 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     local test_tensor_file = path.join(data_dir, 'test_data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local test_run_prepro = true
+    local test_run_prepro = false
     if not ((path.exists(vocab_file) and path.exists(test_tensor_file))) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and test_data.t7 do not exist. Running preprocessing...')
@@ -80,7 +80,7 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     if test_run_prepro then
         -- construct a tensor with all the data, and vocab file
         print('one-time setup: preprocessing input text file ' .. test_input_file .. '...')
-        CharSplitLMMinibatchLoader.text_to_tensor(test_input_file, vocab_file, test_tensor_file)
+        DataLoader.text_to_tensor(test_input_file, vocab_file, test_tensor_file)
     end
 
     print('loading data files...')
@@ -177,7 +177,7 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     return self
 end
 
-function CharSplitLMMinibatchLoader:next_test_data()
+function DataLoader:next_test_data()
     self.test_batch_ix = self.test_batch_ix + 1
     if self.test_batch_ix > #self.test_y then
         self.test_batch_ix = 1
@@ -185,12 +185,12 @@ function CharSplitLMMinibatchLoader:next_test_data()
     return self.test_x[self.test_batch_ix], self.test_y[self.test_batch_ix]
 end
 
-function CharSplitLMMinibatchLoader:reset_batch_pointer(split_index, batch_index)
+function DataLoader:reset_batch_pointer(split_index, batch_index)
     batch_index = batch_index or 0
     self.batch_ix[split_index] = batch_index
 end
 
-function CharSplitLMMinibatchLoader:next_batch(split_index)
+function DataLoader:next_batch(split_index)
     if self.split_sizes[split_index] == 0 then
         -- perform a check here to make sure the user isn't screwing something up
         local split_names = {'train', 'val', 'test'}
@@ -210,7 +210,7 @@ function CharSplitLMMinibatchLoader:next_batch(split_index)
 end
 
 
-function CharSplitLMMinibatchLoader:next_batch_wrt_label(split_index, cur_label)
+function DataLoader:next_batch_wrt_label(split_index, cur_label)
     if self.split_sizes[split_index] == 0 then
         -- perform a check here to make sure the user isn't screwing something up
         local split_names = {'train', 'val', 'test'}
@@ -263,7 +263,7 @@ function CharSplitLMMinibatchLoader:next_batch_wrt_label(split_index, cur_label)
 end
 
 -- *** STATIC method ***
-function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
+function DataLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
     local timer = torch.Timer()
     print('loading text file...')
 
@@ -362,5 +362,5 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
     torch.save(out_tensorfile, saved_data)
 end
 
-return CharSplitLMMinibatchLoader
+return DataLoader
 
