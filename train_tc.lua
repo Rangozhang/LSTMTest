@@ -136,8 +136,7 @@ end
 init_state = {}
 for L=1,opt.num_layers do
     local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
-    if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
-    if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
+    if opt.gpuid >=0 then h_init = h_init:cuda() end
     table.insert(init_state, h_init:clone())
     if opt.model == 'lstm' then
         table.insert(init_state, h_init:clone())
@@ -145,7 +144,7 @@ for L=1,opt.num_layers do
 end
 
 -- ship the model to the GPU if desired
-if opt.gpuid >= 0 and opt.opencl == 0 then
+if opt.gpuid >= 0 then
     for k,v in pairs(protos) do 
         if torch.type(v) == 'table' then
             for _, vv in pairs(v) do
@@ -165,9 +164,13 @@ params, grad_params = model_utils.combine_all_parameters(unpack(protos.rnn))
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers  -- just uniform sampling
 end
+
+
+local num_level = 2
+local window_size = 4
 -- initialize the LSTM forget gates with slightly higher biases to encourage remembering in the beginning
 if opt.model == 'lstm' then
-    for level_ind = 1, 2 do
+    for level_ind = 1, num_level do
         local rnn = protos.rnn[level_ind]
         for layer_idx = 1, opt.num_layers do
             --print(rnn.forwardnodes)
@@ -241,36 +244,54 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1)
-    if opt.gpuid >= 0 then -- ship the input arrays to GPU
-        -- have to convert to float because integers can't be cuda()'d
+    if opt.gpuid >= 0 then 
         x = x:float():cuda()
         y = y:float():cuda()
     end
+
     ------------------- forward pass -------------------
-    local rnn_state = {[0] = init_state_global}
-    local predictions = {}           -- softmax outputs
-    local loss = 0
-    for t=1,opt.seq_length do -- 1 to 50
-        clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-        local x_OneHot = OneHot(vocab_size)(torch.Tensor{x[t]}):cuda()
-        local lst = clones.rnn[t]:forward{x_OneHot, unpack(rnn_state[t-1])}
-        rnn_state[t] = {}
-        for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
-        predictions[t] = lst[#lst] -- last element is the prediction
-        loss = loss + clones.criterion[t]:forward(predictions[t], y)
+    local rnn_state = {}
+    local level_output = {}
+    for l = 1, num_level do
+        rnn_state[l] = {[0] = init_state_global}
+        level_output[l] = {}
     end
+    local loss = 0
+
+    for l = 1, num_level do
+        local num_iter = 0
+        if l == 1 then num_iter = opt.seq_length*window_size
+        else num_iter = opt.seq_length end
+        for t=1,  num_iter do 
+            clones.rnn[l][t]:training() 
+            local lst 
+            if l ~= 1 then 
+                local x_OneHot = OneHot(vocab_size)(torch.Tensor{x[t]}):cuda()
+                lst = clones.rnn[l][t]:forward{x_OneHot, unpack(rnn_state[l][t-1])}
+            else lst = clones.rnn[l][t]:forward{level_output[l][t], unpack(rnn_state[l][t-1])} end
+            rnn_state[l][t] = {}
+            for i=1,#init_state do table.insert(rnn_state[l][t], lst[i]) end 
+            level_output[l][t] = lst[#lst]
+            if l == num_level then loss = loss + clones.criterion[t]:forward(level_output[l][t], y) end
+        end
+            
+    end
+    
+    collectgarbage()
+
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
+
     ------------------ backward pass -------------------
     -- initialize gradient at time t to be zeros (there's no influence from future)
     local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones, i.e. just clone the size and assign all entries to zeros
     for t=opt.seq_length,1,-1 do
-        local doutput_t = clones.criterion[t]:backward(predictions[t], y)
+        local doutput_t = clones.criterion[t]:backward(level_output[num_level][t], y)
         if opt.lossfilter == 1 then
             doutput_t = torch.cmul(doutput_t, y)
         elseif opt.lossfilter == 2 then 
-            _, max_ind = torch.abs(y-predictions[t]):max(2)
-            max_mat = predictions[t]:clone():fill(0)
+            _, max_ind = torch.abs(y-level_output[num_level][t]):max(2)
+            max_mat = level_output[num_level][t]:clone():fill(0)
             max_mat:scatter(2, max_ind, 1)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
@@ -279,25 +300,19 @@ function feval(x)
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[t-1] = {}
         for k,v in pairs(dlst) do
-            if k > 1 then -- k == 1 is gradient on x, which we dont need
-                -- note we do k-1 because first item is dembeddings, and then follow the 
-                -- derivatives of the state, starting at index 2. I know...
-                -- Since the input is x, pre_h, pre_c for two layers
-                -- And output is cur_h, cur_c for two layers and output softlog
-                drnn_state[t-1][k-1] = v
-                -- reverse as the forward one
+            if k > 1 then -- k >= 1 is gradient on states
+                drnn_state[t-1][k-1] = v -- reverse as the forward one
             end
         end
     end
-    -- print 'Out of sequence'
+
     ------------------------ misc ----------------------
     -- transfer final state to initial state (BPTT)
-    init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
+    init_state_global = rnn_state[#rnn_state]
     -- grad_params:div(opt.seq_length) -- this line should be here but since we use rmsprop it would have no effect. Removing for efficiency
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    -- print(grad_params)
-    -- io.read()
+    collectgarbage()
     return loss, grad_params
 end
 
