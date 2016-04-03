@@ -54,9 +54,10 @@ end
 
 
 local split_sizes = {0.90,0.05,0.05}
-loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
+loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
 n_data = loader.test_n_data
 vocab_mapping = loader.vocab_mapping
+vocab_size = loader.vocab_size
 vocab = {}
 for k, v in pairs(vocab_mapping) do
     vocab[v] = k
@@ -104,7 +105,8 @@ for i = 1, n_data do
     local rnn_state = {[0] = current_state}
     local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
     for t = 1, x:size(1) do
-        local lst = protos.rnn:forward{torch.Tensor{x[t]}:cuda(), unpack(rnn_state[t-1])}
+        local x_OneHot = OneHot(vocab_size)(torch.Tensor{x[t]}):cuda()
+        local lst = protos.rnn:forward{x_OneHot, unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]

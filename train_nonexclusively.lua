@@ -243,7 +243,8 @@ for protos_ind = 1, opt.n_class do
             -- forward pass
             for t=1,opt.seq_length do
                 clones.rnn[t]:evaluate() -- for dropout proper functioning
-                local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
+                local x_OneHot = OneHot(vocab_size)(x[{{}, t}]):cuda()
+                local lst = clones.rnn[t]:forward{x_OneHot, unpack(rnn_state[t-1])}
                 rnn_state[t] = {}
                 for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
                 prediction = lst[#lst] 
@@ -291,7 +292,6 @@ for protos_ind = 1, opt.n_class do
         end
         y = tmp_y
         --[[
-            --[[
             pos_ind = torch.range(1, y:size(1)):maskedSelect(y:byte()):long()
             if pos_ind:nDimension() ~= 0 then
                 neg_ind = torch.range(1, y:size(1)):maskedSelect(y:eq(0):byte()):long()[{{1, pos_ind:size(1)}}]
@@ -324,7 +324,8 @@ for protos_ind = 1, opt.n_class do
         local loss = 0
         for t=1,opt.seq_length do -- 1 to 50
             clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-            local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
+            local x_OneHot = OneHot(vocab_size)(x[{{}, t}]):cuda()
+            local lst = clones.rnn[t]:forward{x_OneHot, unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
             predictions[t] = lst[#lst] -- last element is the prediction

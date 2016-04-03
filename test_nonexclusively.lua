@@ -117,7 +117,8 @@ for i = 1, n_data do
         local protos = protos_list[protos_ind]
         local rnn_state = {[0] = clone_list(current_state)}
         for t = 1, x:size(1) do
-            local lst = protos.rnn:forward{torch.Tensor{x[t]}:cuda(), unpack(rnn_state[t-1])}
+            local x_OneHot = OneHot(vocab_size)(torch.Tensor{x[t]}):cuda()
+            local lst = protos.rnn:forward{x_OneHot, unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
             prediction = lst[#lst]
