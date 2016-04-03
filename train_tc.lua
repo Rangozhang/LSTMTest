@@ -31,7 +31,7 @@ cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
-cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
+cmd:option('-nbatches', 5000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
@@ -40,7 +40,7 @@ cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 4,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 100,'number of full passes through the training data')
+cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -54,7 +54,6 @@ cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get writ
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
 cmd:option('-gpuid',3,'which gpu to use. -1 = use CPU')
-cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
 cmd:option('-lossfilter', 0, '1: only backward through the ground truth entry 2: cutting plane algorithm')
 cmd:text()
 
@@ -69,7 +68,7 @@ trainLogger = optim.Logger('train.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
-if opt.gpuid >= 0 and opt.opencl == 0 then
+if opt.gpuid >= 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
     if not ok then print('package cunn not found!') end
@@ -86,24 +85,6 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
     end
 end
 --]]
-
--- initialize clnn/cltorch for training on the GPU and fall back to CPU gracefully
-if opt.gpuid >= 0 and opt.opencl == 1 then
-    local ok, cunn = pcall(require, 'clnn')
-    local ok2, cutorch = pcall(require, 'cltorch')
-    if not ok then print('package clnn not found!') end
-    if not ok2 then print('package cltorch not found!') end
-    if ok and ok2 then
-        print('using OpenCL on GPU ' .. opt.gpuid .. '...')
-        cltorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
-        torch.manualSeed(opt.seed)
-    else
-        print('If cltorch and clnn are installed, your OpenCL driver may be improperly configured.')
-        print('Check your OpenCL driver installation, check output of clinfo command, and try again.')
-        print('Falling back on CPU mode')
-        opt.gpuid = -1 -- overwrite user setting
-    end
-end
 
 -- create the data loader class
 local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
@@ -135,8 +116,11 @@ if string.len(opt.init_from) > 0 then
 else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
+    protos.rnn = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        interm_size = 16
+        protos.rnn[1] = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, 1, opt.dropout)
+        protos.rnn[2] = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, 1, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -162,17 +146,21 @@ end
 
 -- ship the model to the GPU if desired
 if opt.gpuid >= 0 and opt.opencl == 0 then
-    for k,v in pairs(protos) do v:cuda() end
-end
-if opt.gpuid >= 0 and opt.opencl == 1 then
-    for k,v in pairs(protos) do v:cl() end
+    for k,v in pairs(protos) do 
+        if torch.type(v) == 'table' then
+            for _, vv in pairs(v) do
+                vv:cuda()
+            end
+        else
+            v:cuda() 
+        end
+    end
 end
 
 -- put the above things into one flattened parameters tensor
 -- why use model_utils???? since it is able to flatten two networks at the same time
-params, grad_params = model_utils.combine_all_parameters(protos.rnn)
--- params, grad_params = protos.rnn:getParameters()
---
+params, grad_params = model_utils.combine_all_parameters(unpack(protos.rnn))
+
 -- initialization
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers  -- just uniform sampling
@@ -199,7 +187,7 @@ print('number of parameters in the model: ' .. params:nElement())
 clones = {}
 for name,proto in pairs(protos) do
     print('cloning ' .. name)
-    clones[name] = model_utils.clone_many_times(proto, opt.seq_length, not proto.parameters)
+    clones[name] = model_utils.clone_many_times(proto, opt.seq_length)
 end
 
 -- evaluate the loss over an entire split
@@ -215,14 +203,10 @@ function eval_split(split_index, max_batches)
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(split_index)
-        if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
+        if opt.gpuid >= 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
             x = x:float():cuda()
             y = y:float():cuda()
-        end
-        if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-            x = x:cl()
-            y = y:cl()
         end
         -- forward pass
         for t=1,opt.seq_length do
@@ -243,13 +227,9 @@ function eval_split(split_index, max_batches)
     return loss
 end
 
--- do fwd/bwd and return loss, grad_params
 local init_state_global = clone_list(init_state)
--- still don't know how to change grad_params, 
--- How copy_many_times and combine_all_parameters work
--- How can grad_params change when clones change
--- grad_params is being accumulated through time steps, which means the gradient for each time step is accumulated for the whole sequence length
--- And the clones is like a pointer, which just change the original protos.rnn automatically
+
+-- do fwd/bwd and return loss, grad_params
 function feval(x)
     if x ~= params then
         params:copy(x)
@@ -258,14 +238,10 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1)
-    if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
+    if opt.gpuid >= 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
         y = y:float():cuda()
-    end
-    if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-        x = x:cl()
-        y = y:cl()
     end
     ------------------- forward pass -------------------
     local rnn_state = {[0] = init_state_global}
@@ -286,7 +262,6 @@ function feval(x)
     -- initialize gradient at time t to be zeros (there's no influence from future)
     local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones, i.e. just clone the size and assign all entries to zeros
     for t=opt.seq_length,1,-1 do
-        -- backprop through loss, and softmax/linear
         local doutput_t = clones.criterion[t]:backward(predictions[t], y)
         if opt.lossfilter == 1 then
             doutput_t = torch.cmul(doutput_t, y)
@@ -296,20 +271,9 @@ function feval(x)
             max_mat:scatter(2, max_ind, 1)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
-        --print(doutput_t)
         table.insert(drnn_state[t], doutput_t)
-        -- still don't know why dlst[1] is empty
         local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
         -- dlst is dlst_dI, need to feed to the previous time step
-        -- The following two results are the same
-        --[[
-        _, grad = clones.rnn[t]:getParameters()
-        _, grad2 = clones.rnn[49]:getParameters()
-        print(grad[1])
-        print(grad2[1])
-        print(grad_params[1])
-        io.read()
-        --]]
         drnn_state[t-1] = {}
         for k,v in pairs(dlst) do
             if k > 1 then -- k == 1 is gradient on x, which we dont need
@@ -340,21 +304,12 @@ print("start training:")
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
---[[
-local optimState = {
-    learningRate = opt.learningRate,
-    learningRateDecay = 0.0,
-                    momentum = opt.momentum,
-                         dampening = 0.0,
-                              weightDecay = opt.weightDecay
-}
---]]
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local epoch = 1
 for i = 1, iterations do
-    local new_epoch = math.floor(i / loader.ntrain)
+    local new_epoch = math.floor(i / iterations_per_epoch)
     local is_new_epoch = false
     if new_epoch > epoch then 
         epoch = new_epoch
@@ -391,7 +346,7 @@ for i = 1, iterations do
         local val_loss = eval_split(2) -- 2 = validation
         val_losses[i] = val_loss
 
-        local savefile = string.format('%s/lm_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/tc_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
@@ -407,7 +362,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %d), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
+        print(string.format("[%d][%d/%d], train_loss: %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", epoch, i/iterations_per_epoch, iterations_per_epoch, train_loss, grad_params:norm() / params:norm(), time))
     end
    
     if i % 10 == 0 then collectgarbage() end
