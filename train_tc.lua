@@ -31,7 +31,7 @@ cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
-cmd:option('-nbatches', 5000, 'number of training batches loader prepare')
+cmd:option('-nbatches', 100, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
@@ -119,8 +119,8 @@ else
     protos.rnn = {}
     if opt.model == 'lstm' then
         interm_size = 16
-        protos.rnn[1] = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, 1, opt.dropout)
-        protos.rnn[2] = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, 1, opt.dropout)
+        protos.rnn[1] = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn[2] = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -167,14 +167,17 @@ if do_random_init then
 end
 -- initialize the LSTM forget gates with slightly higher biases to encourage remembering in the beginning
 if opt.model == 'lstm' then
-    for layer_idx = 1, opt.num_layers do
-        --print(protos.rnn.forwardnodes)
-        for _,node in ipairs(protos.rnn.forwardnodes) do -- where to get forwardnodes? in nngraph
-            if node.data.annotations.name == "i2h_" .. layer_idx then
-                print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
-                -- the gates are, in order, i,f,o,g, so f is the 2nd block of weights
-                -- which means f is from 128+1 to 256
-                node.data.module.bias[{{opt.rnn_size+1, 2*opt.rnn_size}}]:fill(1.0)
+    for level_ind = 1, 2 do
+        local rnn = protos.rnn[level_ind]
+        for layer_idx = 1, opt.num_layers do
+            --print(rnn.forwardnodes)
+            for _,node in ipairs(rnn.forwardnodes) do -- where to get forwardnodes? in nngraph
+                if node.data.annotations.name == "i2h_" .. layer_idx then
+                    print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                    -- the gates are, in order, i,f,o,g, so f is the 2nd block of weights
+                    -- which means f is from 128+1 to 256
+                    node.data.module.bias[{{opt.rnn_size+1, 2*opt.rnn_size}}]:fill(1.0)
+                end
             end
         end
     end
@@ -379,4 +382,4 @@ for i = 1, iterations do
     end
 end
 
-
+--]]
