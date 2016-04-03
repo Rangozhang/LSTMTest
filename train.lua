@@ -49,7 +49,7 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 3 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-eval_val_every', 1 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
@@ -299,15 +299,6 @@ function feval(x)
         -- still don't know why dlst[1] is empty
         local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
         -- dlst is dlst_dI, need to feed to the previous time step
-        -- The following two results are the same
-        --[[
-        _, grad = clones.rnn[t]:getParameters()
-        _, grad2 = clones.rnn[49]:getParameters()
-        print(grad[1])
-        print(grad2[1])
-        print(grad_params[1])
-        io.read()
-        --]]
         drnn_state[t-1] = {}
         for k,v in pairs(dlst) do
             if k > 1 then -- k == 1 is gradient on x, which we dont need
@@ -327,8 +318,6 @@ function feval(x)
     -- grad_params:div(opt.seq_length) -- this line should be here but since we use rmsprop it would have no effect. Removing for efficiency
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    -- print(grad_params)
-    -- io.read()
     return loss, grad_params
 end
 
