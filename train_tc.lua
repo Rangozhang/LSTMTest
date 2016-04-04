@@ -38,8 +38,8 @@ cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
-cmd:option('-seq_length', 4,'number of timesteps to unroll for')
-cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
+cmd:option('-seq_length', 3,'number of timesteps to unroll for')
+cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -87,7 +87,7 @@ end
 --]]
 
 -- create the data loader class
-local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
+local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -116,11 +116,10 @@ if string.len(opt.init_from) > 0 then
 else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
-    protos.rnn = {}
     if opt.model == 'lstm' then
         interm_size = 16
-        protos.rnn[1] = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
-        protos.rnn[2] = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn2 = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -158,7 +157,7 @@ end
 
 -- put the above things into one flattened parameters tensor
 -- why use model_utils???? since it is able to flatten two networks at the same time
-params, grad_params = model_utils.combine_all_parameters(unpack(protos.rnn))
+params, grad_params = model_utils.combine_all_parameters(protos.rnn1, protos.rnn2)
 
 -- initialization
 if do_random_init then
@@ -171,7 +170,7 @@ local window_size = 4
 -- initialize the LSTM forget gates with slightly higher biases to encourage remembering in the beginning
 if opt.model == 'lstm' then
     for level_ind = 1, num_level do
-        local rnn = protos.rnn[level_ind]
+        local rnn = level_ind == 1 and protos.rnn1 or protos.rnn2
         for layer_idx = 1, opt.num_layers do
             --print(rnn.forwardnodes)
             for _,node in ipairs(rnn.forwardnodes) do -- where to get forwardnodes? in nngraph
@@ -193,7 +192,10 @@ print('number of parameters in the model: ' .. params:nElement())
 clones = {}
 for name,proto in pairs(protos) do
     print('cloning ' .. name)
-    clones[name] = model_utils.clone_many_times(proto, opt.seq_length)
+    local rep_num = 0
+    if name == 'rnn1' then rep_num = opt.seq_length^2
+    else rep_num = opt.seq_length end
+    clones[name] = model_utils.clone_many_times(proto, rep_num)
 end
 
 -- evaluate the loss over an entire split
@@ -233,7 +235,9 @@ function eval_split(split_index, max_batches)
     return loss
 end
 
-local init_state_global = clone_list(init_state)
+local init_state_global = {clone_list(init_state), clone_list(init_state)}
+print(init_state_global)
+io.read()
 
 -- do fwd/bwd and return loss, grad_params
 function feval(x)
@@ -253,38 +257,56 @@ function feval(x)
     local rnn_state = {}
     local level_output = {}
     for l = 1, num_level do
-        rnn_state[l] = {[0] = init_state_global}
+        rnn_state[l] = {[0] = init_state_global[l]}
         level_output[l] = {}
     end
     local loss = 0
 
-    for l = 1, num_level do
-        local num_iter = 0
-        if l == 1 then num_iter = opt.seq_length*window_size
-        else num_iter = opt.seq_length end
-        for t=1,  num_iter do 
-            clones.rnn[l][t]:training() 
-            local lst 
-            if l ~= 1 then 
-                local x_OneHot = OneHot(vocab_size)(torch.Tensor{x[t]}):cuda()
-                lst = clones.rnn[l][t]:forward{x_OneHot, unpack(rnn_state[l][t-1])}
-            else lst = clones.rnn[l][t]:forward{level_output[l][t], unpack(rnn_state[l][t-1])} end
-            rnn_state[l][t] = {}
-            for i=1,#init_state do table.insert(rnn_state[l][t], lst[i]) end 
-            level_output[l][t] = lst[#lst]
-            if l == num_level then loss = loss + clones.criterion[t]:forward(level_output[l][t], y) end
+    -- first level
+    for t=1,  opt.seq_length^2 do 
+        clones.rnn1[t]:training() 
+        local x_OneHot = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
+        local lst = clones.rnn1[t]:forward{x_OneHot, unpack(rnn_state[1][t-1])}
+        rnn_state[1][t] = {}
+        for i=1,#init_state do table.insert(rnn_state[1][t], lst[i]) end 
+        level_output[1][t] = lst[#lst]
+    end
+
+    -- merge
+    local merged_output = {}
+    for t=1, opt.seq_length do
+        merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+        for tt=1, opt.seq_length do
+            merged_output[t]:add(level_output[1][(t-1)*opt.seq_length+tt])
         end
-            
+        merged_output[t]:div(opt.seq_length)
     end
     
-    collectgarbage()
-
+    -- second level
+    for t=1,  opt.seq_length do 
+        clones.rnn2[t]:training() 
+        local lst = clones.rnn2[t]:forward{merged_output[t], unpack(rnn_state[2][t-1])}
+        rnn_state[2][t] = {}
+        for i=1,#init_state do table.insert(rnn_state[2][t], lst[i]) end 
+        level_output[2][t] = lst[#lst]
+        loss = loss + clones.criterion[t]:forward(level_output[2][t], y)
+    end
+    
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
 
+    collectgarbage()
+
     ------------------ backward pass -------------------
     -- initialize gradient at time t to be zeros (there's no influence from future)
-    local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones, i.e. just clone the size and assign all entries to zeros
+    local drnn_state = {}
+    local dinterm_val = {}
+    for l = 1, num_level do
+        drnn_state[l] = {[opt.seq_length] = clone_list(init_state, true)} -- clones the size and zeros it
+        dinterm_val[l] = {[opt.seq_length] = torch.zeros(opt.batch_size, interm_size)}
+    end
+
+    -- second level
     for t=opt.seq_length,1,-1 do
         local doutput_t = clones.criterion[t]:backward(level_output[num_level][t], y)
         if opt.lossfilter == 1 then
@@ -296,19 +318,37 @@ function feval(x)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
         table.insert(drnn_state[t], doutput_t)
-        local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
+        local dlst = clones.rnn2[t]:backward({x[{{}, t}], unpack(rnn_state[2][t-1])}, drnn_state[2][t])
         -- dlst is dlst_dI, need to feed to the previous time step
-        drnn_state[t-1] = {}
+        drnn_state[2][t-1] = {}
         for k,v in pairs(dlst) do
             if k > 1 then -- k >= 1 is gradient on states
-                drnn_state[t-1][k-1] = v -- reverse as the forward one
+                drnn_state[2][t-1][k-1] = v -- reverse as the forward one
+            else
+                dinterm_val[t-1] = v
+            end
+        end
+    end
+
+    -- first level
+    for t=opt.seq_length^2,1,-1 do
+        local derv_ind = t%opt.seq_length == 0 and 3 or t%opt.seq_length
+        local doutput_t = dinterm_val[derv_ind]:clone()
+        table.insert(drnn_state[t], doutput_t)
+        local dlst = clones.rnn1[t]:backward({x[{{}, t}], unpack(rnn_statep[1][t-1])}, drnn_state[1][t])
+        -- dlst is dlst_dI, need to feed to the previous time step
+        drnn_state[1][t-1] = {}
+        for k,v in pairs(dlst) do
+            if k > 1 then -- k >= 1 is gradient on states
+                drnn_state[1][t-1][k-1] = v -- reverse as the forward one
             end
         end
     end
 
     ------------------------ misc ----------------------
     -- transfer final state to initial state (BPTT)
-    init_state_global = rnn_state[#rnn_state]
+    init_state_global[1] = rnn_state[1][#rnn_state]
+    init_state_global[2] = rnn_state[2][#rnn_state]
     -- grad_params:div(opt.seq_length) -- this line should be here but since we use rmsprop it would have no effect. Removing for efficiency
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
