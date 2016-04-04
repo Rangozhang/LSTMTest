@@ -39,7 +39,7 @@ cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start d
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
-cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 128,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -236,8 +236,6 @@ function eval_split(split_index, max_batches)
 end
 
 local init_state_global = {clone_list(init_state), clone_list(init_state)}
-print(init_state_global)
-io.read()
 
 -- do fwd/bwd and return loss, grad_params
 function feval(x)
@@ -300,11 +298,10 @@ function feval(x)
     ------------------ backward pass -------------------
     -- initialize gradient at time t to be zeros (there's no influence from future)
     local drnn_state = {}
-    local dinterm_val = {}
-    for l = 1, num_level do
-        drnn_state[l] = {[opt.seq_length] = clone_list(init_state, true)} -- clones the size and zeros it
-        dinterm_val[l] = {[opt.seq_length] = torch.zeros(opt.batch_size, interm_size)}
-    end
+    drnn_state[1] = {[opt.seq_length^2] = clone_list(init_state, true)} -- clones the size and zeros it
+    drnn_state[2] = {[opt.seq_length] = clone_list(init_state, true)} -- clones the size and zeros it
+
+    local dinterm_val = {[opt.seq_length] = torch.zeros(opt.batch_size, interm_size)}
 
     -- second level
     for t=opt.seq_length,1,-1 do
@@ -317,7 +314,7 @@ function feval(x)
             max_mat:scatter(2, max_ind, 1)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
-        table.insert(drnn_state[t], doutput_t)
+        table.insert(drnn_state[2][t], doutput_t)
         local dlst = clones.rnn2[t]:backward({x[{{}, t}], unpack(rnn_state[2][t-1])}, drnn_state[2][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[2][t-1] = {}
@@ -325,17 +322,17 @@ function feval(x)
             if k > 1 then -- k >= 1 is gradient on states
                 drnn_state[2][t-1][k-1] = v -- reverse as the forward one
             else
-                dinterm_val[t-1] = v
+                dinterm_val[t] = v
             end
         end
     end
 
     -- first level
     for t=opt.seq_length^2,1,-1 do
-        local derv_ind = t%opt.seq_length == 0 and 3 or t%opt.seq_length
+        local derv_ind = math.floor((t-1)/opt.seq_length) + 1
         local doutput_t = dinterm_val[derv_ind]:clone()
-        table.insert(drnn_state[t], doutput_t)
-        local dlst = clones.rnn1[t]:backward({x[{{}, t}], unpack(rnn_statep[1][t-1])}, drnn_state[1][t])
+        table.insert(drnn_state[1][t], doutput_t)
+        local dlst = clones.rnn1[t]:backward({merged_output[t], unpack(rnn_state[1][t-1])}, drnn_state[1][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[1][t-1] = {}
         for k,v in pairs(dlst) do
