@@ -81,7 +81,7 @@ end
 --]]
 
 -- create the data loader class
-local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches)
+local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -111,9 +111,9 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        interm_size = 16
+        interm_size = opt.rnn_size
         protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
-        protos.rnn2 = LSTM.lstm(interm_size*opt.seq_length, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn2 = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then

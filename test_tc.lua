@@ -52,9 +52,8 @@ if opt.gpuid >= 0 then
     for k,v in pairs(protos) do v:cuda() end
 end
 
-
 local split_sizes = {0.90,0.05,0.05}
-loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
+loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
 n_data = loader.test_n_data
 vocab_mapping = loader.vocab_mapping
 vocab_size = loader.vocab_size
@@ -62,6 +61,8 @@ vocab = {}
 for k, v in pairs(vocab_mapping) do
     vocab[v] = k
 end
+
+num_level = 2
 
 correct = 0.0
 total = 0.0
@@ -71,30 +72,13 @@ local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
 
-protos.rnn:evaluate()
+protos.rnn1:evaluate()
+protos.rnn2:evaluate()
 
 for i = 1, n_data do
-    xlua.progress(i, n_data)
+    --xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
     
-    --print("-----------Data----------")
-    --print(x)
-    --print(y)
-    --[[
-    ina = {'c', 'y', 'w', 'd', 'r', 'r', 'x', 'n', 'f', 'i', 'j'}
-    x = torch.Tensor(#ina)
-    for h = 1, #ina do
-        x[h] = vocab_mapping[ina[h]
-    end
-    
-    tmp_str = ""
-    for z = 1, x:size(1) do
-        tmp_str = tmp_str .. " " .. vocab[x[z]
-    end
-    print('------data------')
-    print(tmp_str)
-    print(y)
-    --]]
     if opt.gpuid >= 0 then
         x = x:float():cuda()
     end
@@ -102,31 +86,60 @@ for i = 1, n_data do
     draw1 = torch.Tensor(x:size(1)):fill(0)
     draw2 = torch.Tensor(x:size(1)):fill(0)
 
-    local rnn_state = {[0] = current_state}
-    local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
+    local rnn_state = {}
+    local level_output = {}
+    for l = 1, num_level do
+        rnn_state[l] = {[0] = clone_list(current_state)}
+        level_output[l] = {}
+    end
+    
+    local interm_size = 16
+    local final_pred = torch.zeros(opt.n_class):cuda()
+    local interm_val = torch.zeros(1, interm_size):cuda()
     for t = 1, x:size(1) do
         local x_OneHot = OneHot(vocab_size):forward(torch.Tensor{x[t]}):cuda()
-        local lst = protos.rnn:forward{x_OneHot, unpack(rnn_state[t-1])}
-        rnn_state[t] = {}
-        for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
-        prediction = lst[#lst]
-        draw1[t] = prediction[{1, y[1]}]
-        if opt.OverlappingData then
-            draw2[t] = prediction[{1, y[2]}]
+        local lst = protos.rnn1:forward{x_OneHot, unpack(rnn_state[1][t-1])}
+        rnn_state[1][t] = {}
+        for i = 1, #current_state do table.insert(rnn_state[1][t], lst[i]) end
+        level_output[1][t] = lst[#lst]
+        interm_val:add(level_output[1][t])
+        if t%opt.seq_length == 0 or t == x:size(1) then
+            local denominator = (t%opt.seq_length == 0) and opt.seq_length or t%opt.seq_length
+            interm_val:div(denominator)
+            local t2_ind = math.floor((t-1)/3)+1
+            local lst = protos.rnn2:forward{interm_val, unpack(rnn_state[2][t2_ind-1])}
+            rnn_state[2][t2_ind] = {}
+            for i = 1, #current_state do table.insert(rnn_state[2][t2_ind], lst[i]) end
+            interm_val:zero()
+            local prediction = lst[#lst]
+            for tt = 0, denominator-1 do
+                draw1[t-tt] = prediction[{1, y[1]}]
+            end
+            if opt.OverlappingData then
+                for tt = 0, denominator-1 do
+                    draw2[t-tt] = prediction[{1, y[2]}]
+                end
+            end
+            for tt = 0, denominator-1 do
+                draw1[t-tt] = prediction[{1, y[1]}]
+            end
+            for tt = denominator-1,0,-1 do
+                tmp_str = vocab[x[t-tt]] .. "\t"
+                for m = 1, prediction:size(2) do
+                    tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
+                end
+                print(tmp_str)
+            end
+            
+            -- Take average
+            final_pred = final_pred + prediction
+            --[[
+            -- Take Maximum
+            for w = 1, opt.n_class do
+                final_pred[w] = math.max(final_pred[w], prediction[{1, w}])
+            end
+            --]]
         end
-        tmp_str = vocab[x[t]] .. "\t"
-        for m = 1, prediction:size(2) do
-            tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
-        end
-        print(tmp_str)
-        -- Take average
-        final_pred = final_pred + prediction
-        --[[
-        -- Take Maximum
-        for w = 1, opt.n_class do
-            final_pred[w] = math.max(final_pred[w], prediction[{1, w}])
-        end
-        --]]
     end
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
@@ -145,7 +158,7 @@ for i = 1, n_data do
         gnuplot.raw(x_str)
         gnuplot.plotflush()
     end
-    final_pred = final_pred/x:size(1)
+    final_pred = final_pred/math.ceil(x:size(1)/opt.seq_length)
     --print(final_pred)
     --io.read()
     tmp_str = "Total:\t"
@@ -199,6 +212,7 @@ for i = 1, n_data do
         end
         end
     end
+    io.read()
 end
 
 if not opt.OverlappingData then
