@@ -26,8 +26,8 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', false)
-cmd:option('-draw', false)
+cmd:option('-OverlappingData', true)
+cmd:option('-draw', true)
 cmd:text()
 
 -- parse input params

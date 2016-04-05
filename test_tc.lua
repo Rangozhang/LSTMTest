@@ -20,13 +20,13 @@ cmd:text()
 cmd:text('Train a character-level language model')
 cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',1,'which gpu to use. -1 = use CPU')
 cmd:option('-data_dir','data/test')
 cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', false)
+cmd:option('-OverlappingData', true)
 cmd:option('-draw', true)
 cmd:text()
 
@@ -128,7 +128,7 @@ for i = 1, n_data do
                 for m = 1, prediction:size(2) do
                     tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
                 end
-                print(tmp_str)
+                --print(tmp_str)
             end
             
             -- Take average
@@ -165,7 +165,7 @@ for i = 1, n_data do
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
     end
-    print(tmp_str)
+    --print(tmp_str)
     --io.read()
     --print(final_pred:sum())
     --io.read()
@@ -212,7 +212,6 @@ for i = 1, n_data do
         end
         end
     end
-    io.read()
 end
 
 if not opt.OverlappingData then
