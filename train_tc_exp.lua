@@ -33,7 +33,7 @@ cmd:option('-learning_rate_decay_every', 4,'in number of epochs, when to start d
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'last layer"s number of timesteps to unroll for')
-cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 10,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -47,7 +47,7 @@ cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on va
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
-cmd:option('-gpuid',3,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',2,'which gpu to use. -1 = use CPU')
 cmd:option('-lossfilter', 0, '1: only backward through the ground truth entry 2: cutting plane algorithm')
 cmd:text()
 
@@ -342,10 +342,7 @@ function feval(x)
         local doutput_t = dinterm_val[derv_ind][{{}, 
             {interm_size*((t-1)%opt.seq_length)+1, interm_size*((t-1)%opt.seq_length+1)}}]:clone()
         rs_size = #drnn_state[1][t]
-        print(drnn_state[1][t][rs_size])
         drnn_state[1][t][rs_size] = drnn_state[1][t][rs_size] + doutput_t
-        print(drnn_state[1][t][rs_size])
-        io.read()
         local dlst = clones.rnn1[t]:backward({x[{{}, t}], unpack(rnn_state[1][t-1])}, drnn_state[1][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[1][t-1] = {}
@@ -411,7 +408,7 @@ for i = 1, iterations do
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
 
-        local savefile = string.format('%s/tc_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/tc_exp_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos

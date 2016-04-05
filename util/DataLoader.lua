@@ -71,7 +71,7 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
     local test_tensor_file = path.join(data_dir, 'test_data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
-    local test_run_prepro = false
+    local test_run_prepro = true
     if not ((path.exists(vocab_file) and path.exists(test_tensor_file))) then
         -- prepro files do not exist, generate them
         print('vocab.t7 and test_data.t7 do not exist. Running preprocessing...')

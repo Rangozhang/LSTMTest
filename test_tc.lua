@@ -26,7 +26,7 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', true)
+cmd:option('-OverlappingData', false)
 cmd:option('-draw', true)
 cmd:text()
 
@@ -93,7 +93,7 @@ for i = 1, n_data do
         level_output[l] = {}
     end
     
-    local interm_size = 16
+    local interm_size = 32
     local final_pred = torch.zeros(opt.n_class):cuda()
     local interm_val = torch.zeros(1, interm_size*opt.seq_length):cuda()
     for t = 1, x:size(1) do
