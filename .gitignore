@@ -12,6 +12,8 @@ image
 image/*
 image_pureData
 image_pureData/*
+image_pureData_tc
+image_pureData_tc/*
 cv_unexclu_uneven
 cv_unexclu_uneven/*
 image_nonexclusively

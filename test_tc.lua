@@ -95,18 +95,18 @@ for i = 1, n_data do
     
     local interm_size = 16
     local final_pred = torch.zeros(opt.n_class):cuda()
-    local interm_val = torch.zeros(1, interm_size):cuda()
+    local interm_val = torch.zeros(1, interm_size*opt.seq_length):cuda()
     for t = 1, x:size(1) do
         local x_OneHot = OneHot(vocab_size):forward(torch.Tensor{x[t]}):cuda()
         local lst = protos.rnn1:forward{x_OneHot, unpack(rnn_state[1][t-1])}
         rnn_state[1][t] = {}
         for i = 1, #current_state do table.insert(rnn_state[1][t], lst[i]) end
         level_output[1][t] = lst[#lst]
-        interm_val:add(level_output[1][t])
+        interm_val[{{},{((t-1)%opt.seq_length)*interm_size+1, ((t-1)%opt.seq_length+1)*interm_size}}]:add(level_output[1][t])
         if t%opt.seq_length == 0 or t == x:size(1) then
             local denominator = (t%opt.seq_length == 0) and opt.seq_length or t%opt.seq_length
-            interm_val:div(denominator)
-            local t2_ind = math.floor((t-1)/3)+1
+            --interm_val:div(denominator)
+            local t2_ind = math.floor((t-1)/opt.seq_length)+1
             local lst = protos.rnn2:forward{interm_val, unpack(rnn_state[2][t2_ind-1])}
             rnn_state[2][t2_ind] = {}
             for i = 1, #current_state do table.insert(rnn_state[2][t2_ind], lst[i]) end
@@ -144,10 +144,10 @@ for i = 1, n_data do
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
-            gnuplot.pngfigure('./image_pureData/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_pureData_tc/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
         else
-            gnuplot.pngfigure('./image/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_tc/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'}, {'class '..tostring(y[2]), x_axis, draw2, '~'})
         end
         x_str = 'set xtics ("'

@@ -27,7 +27,7 @@ cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
 cmd:option('-OverlappingData', false)
-cmd:option('-draw', true)
+cmd:option('-draw', false)
 cmd:text()
 
 -- parse input params
@@ -118,7 +118,7 @@ for i = 1, n_data do
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
-        print(tmp_str)
+        --print(tmp_str)
         -- Take average
         final_pred = final_pred + prediction
         --[[
@@ -152,7 +152,7 @@ for i = 1, n_data do
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
     end
-    print(tmp_str)
+    --print(tmp_str)
     --io.read()
     --print(final_pred:sum())
     --io.read()

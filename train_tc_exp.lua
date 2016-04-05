@@ -29,11 +29,11 @@ cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
-cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-learning_rate_decay_every', 4,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'last layer"s number of timesteps to unroll for')
-cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 10,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -43,7 +43,7 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 5 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
@@ -81,7 +81,7 @@ end
 --]]
 
 -- create the data loader class
-local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
+local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -112,8 +112,8 @@ else
     protos = {}
     if opt.model == 'lstm' then
         interm_size = opt.rnn_size
-        protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
-        protos.rnn2 = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn1 = LSTM.lstm_unit(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn2 = LSTM.lstm(interm_size*opt.seq_length, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -202,7 +202,7 @@ function eval_split(split_index, max_batches)
     local rnn_state = {}
     local level_output = {}
     for l = 1, num_level do
-        rnn_state[l] = {[0] = clone_list(init_state)}
+        rnn_state[l] = {[0] = clone_list(init_state, true)}
         level_output[l] = {}
     end
     for i = 1,n do -- iterate over batches in the split
@@ -229,11 +229,10 @@ function eval_split(split_index, max_batches)
         -- merge
         local merged_output = {}
         for t=1, opt.seq_length do
-            merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+            merged_output[t] = torch.zeros(opt.batch_size, interm_size*opt.seq_length):cuda()  
             for tt=1, opt.seq_length do
-                merged_output[t]:add(level_output[1][(t-1)*opt.seq_length+tt])
+                merged_output[t][{{}, {(tt-1)*interm_size+1, tt*interm_size}}]:add(level_output[1][(t-1)*opt.seq_length+tt])
             end
-            merged_output[t]:div(opt.seq_length)
         end
     
         -- second level
@@ -256,7 +255,7 @@ function eval_split(split_index, max_batches)
     return loss
 end
 
-local init_state_global = {clone_list(init_state), clone_list(init_state)}
+local init_state_global = {clone_list(init_state, true), clone_list(init_state, true)}
 
 -- do fwd/bwd and return loss, grad_params
 function feval(x)
@@ -288,7 +287,7 @@ function feval(x)
         local lst = clones.rnn1[t]:forward{x_OneHot, unpack(rnn_state[1][t-1])}
         rnn_state[1][t] = {}
         for i=1,#init_state do table.insert(rnn_state[1][t], lst[i]) end 
-        level_output[1][t] = lst[#lst]
+        level_output[1][t] = lst[#init_state]
     end
 
     -- merge
@@ -342,7 +341,11 @@ function feval(x)
         local derv_ind = math.floor((t-1)/opt.seq_length) + 1
         local doutput_t = dinterm_val[derv_ind][{{}, 
             {interm_size*((t-1)%opt.seq_length)+1, interm_size*((t-1)%opt.seq_length+1)}}]:clone()
-        table.insert(drnn_state[1][t], doutput_t)
+        rs_size = #drnn_state[1][t]
+        print(drnn_state[1][t][rs_size])
+        drnn_state[1][t][rs_size] = drnn_state[1][t][rs_size] + doutput_t
+        print(drnn_state[1][t][rs_size])
+        io.read()
         local dlst = clones.rnn1[t]:backward({x[{{}, t}], unpack(rnn_state[1][t-1])}, drnn_state[1][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[1][t-1] = {}
@@ -373,7 +376,7 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local epoch = 1
 for i = 1, iterations do
-    local new_epoch = math.floor(i / iterations_per_epoch)
+    local new_epoch = math.floor(i / iterations_per_epoch) + 1
     local is_new_epoch = false
     if new_epoch > epoch then 
         epoch = new_epoch
