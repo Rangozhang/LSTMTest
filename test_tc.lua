@@ -26,8 +26,8 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', false)
-cmd:option('-draw', true)
+cmd:option('-OverlappingData', true)
+cmd:option('-draw', false)
 cmd:text()
 
 -- parse input params
@@ -71,12 +71,13 @@ local n_data_for_each_class = accuracy_for_each_class:clone()
 local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
+local first_two = 0.0
 
 protos.rnn1:evaluate()
 protos.rnn2:evaluate()
 
 for i = 1, n_data do
-    --xlua.progress(i, n_data)
+    xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
     
     if opt.gpuid >= 0 then
@@ -93,7 +94,7 @@ for i = 1, n_data do
         level_output[l] = {}
     end
     
-    local interm_size = 32
+    local interm_size = 16
     local final_pred = torch.zeros(opt.n_class):cuda()
     local interm_val = torch.zeros(1, interm_size*opt.seq_length):cuda()
     for t = 1, x:size(1) do
@@ -144,7 +145,7 @@ for i = 1, n_data do
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
-            gnuplot.pngfigure('./image_pureData_tc/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_pureData_tc_longtail/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
         else
             gnuplot.pngfigure('./image_tc/instance' .. tostring(i) .. '.png')
@@ -196,6 +197,12 @@ for i = 1, n_data do
             print(y .. ':' .. res_y)
         end
     else
+        _, res_rank = torch.sort(final_pred)
+        res_y1 = res_rank[-1]
+        res_y2 = res_rank[-2]
+        if res_y1 == y[1] or res_y1 == y[2] and res_y2 == y[1] or res_y2 == y[2] then
+            first_two = first_two + 1
+        end
         res_y = increasing_ind:maskedSelect(final_pred:gt(0.5):byte())
         res1 = (res_y:eq(y[1]):sum() >= 1)
         res2 = (res_y:eq(y[2]):sum() >= 1)
@@ -229,4 +236,6 @@ else
     print(accuracy_1 / total)
     print("Accracy as long as the result consists of the two classes")
     print(accuracy_1_ / total)
+    print("Accuracy as first highest two are correct")
+    print(first_two / total)
 end

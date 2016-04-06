@@ -20,7 +20,8 @@ for line in f:
         while not flag:
             data_line = ''.join(random.sample(string.uppercase, random.randint(0,3)))
             for each in seq:
-                data_line += each + ''.join(random.sample(string.uppercase, random.randint(0,3)))
+                data_line += each + ''.join(random.sample(string.uppercase, random.randint(6,8)))
+            data_line += ''.join(random.sample(string.uppercase, random.randint(20, 26)))
             if data_line not in train_list:
                flag = True
         f2.write(tokens[0]+' '+data_line+'\n')

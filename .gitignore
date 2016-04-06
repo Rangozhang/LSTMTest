@@ -16,10 +16,16 @@ image_tc_h
 image_tc_h/*
 image_pureData
 image_pureData/*
+image_pureData_longtail
+image_pureData_longtail/*
 image_pureData_tc
 image_pureData_tc/*
+image_pureData_tc_longtail
+image_pureData_tc_longtail/*
 image_pureData_tc_h
 image_pureData_tc_h/*
+image_pureData_tc_longtail_h
+image_pureData_tc_longtail_h/*
 cv_unexclu_uneven
 cv_unexclu_uneven/*
 image_nonexclusively

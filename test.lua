@@ -27,7 +27,7 @@ cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
 cmd:option('-OverlappingData', true)
-cmd:option('-draw', true)
+cmd:option('-draw', false)
 cmd:text()
 
 -- parse input params
@@ -70,6 +70,7 @@ local n_data_for_each_class = accuracy_for_each_class:clone()
 local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
+local first_two = 0.0
 
 protos.rnn:evaluate()
 
@@ -183,6 +184,12 @@ for i = 1, n_data do
             print(y .. ':' .. res_y)
         end
     else
+        _, res_rank = torch.sort(final_pred)
+        res_y1 = res_rank[-1]
+        res_y2 = res_rank[-2]
+        if res_y1 == y[1] or res_y1 == y[2] and res_y2 == y[1] or res_y2 == y[2] then
+            first_two = first_two + 1
+        end
         res_y = increasing_ind:maskedSelect(final_pred:gt(0.5):byte())
         res1 = (res_y:eq(y[1]):sum() >= 1)
         res2 = (res_y:eq(y[2]):sum() >= 1)
@@ -216,4 +223,6 @@ else
     print(accuracy_1 / total)
     print("Accracy as long as the result consists of the two classes")
     print(accuracy_1_ / total)
+    print("Accuracy as first highest two are correct")
+    print(first_two / total)
 end
