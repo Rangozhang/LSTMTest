@@ -145,7 +145,7 @@ for i = 1, n_data do
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
-            gnuplot.pngfigure('./image_tc_pureData/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_pureData_tc/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'})
         else
             gnuplot.pngfigure('./image_tc/instance' .. tostring(i) .. '.png')
