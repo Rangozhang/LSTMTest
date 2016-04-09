@@ -324,14 +324,10 @@ function feval(x)
         local out_sz = level_output[1][1]:size()
         for tt=1, opt.seq_length do
             local out_t = torch.reshape(level_output[1][(t-1)*opt.seq_length+tt], 1, out_sz[1], out_sz[2])
-            if tt==1 then
-                concate_res[t] = out_t
-            else
-                concate_res[t] = torch.cat(concate_res[t], out_t, 1)
-            end
+            if tt==1 then concate_res[t] = out_t
+            else concate_res[t] = torch.cat(concate_res[t], out_t, 1) end
         end
-        concate_res[t] = concate_res[t]:transpose(1, 2)
-        local maxpooling_input = temporalPooling[t]:forward(concate_res[t])
+        local maxpooling_input = temporalPooling[t]:forward(concate_res[t]:transpose(1, 2))
         merged_output[t]:copy(torch.squeeze(maxpooling_input))
     end
     
