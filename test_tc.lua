@@ -21,13 +21,13 @@ cmd:text('Train a character-level language model')
 cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-gpuid',1,'which gpu to use. -1 = use CPU')
-cmd:option('-data_dir','data/test')
+cmd:option('-data_dir','data/test_')
 cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', true)
-cmd:option('-draw', false)
+cmd:option('-OverlappingData', false)
+cmd:option('-draw', true)
 cmd:text()
 
 -- parse input params
@@ -94,7 +94,7 @@ for i = 1, n_data do
         level_output[l] = {}
     end
     
-    local interm_size = 16
+    local interm_size = 32
     local final_pred = torch.zeros(opt.n_class):cuda()
     local interm_val = torch.zeros(1, interm_size*opt.seq_length):cuda()
     for t = 1, x:size(1) do
@@ -145,11 +145,11 @@ for i = 1, n_data do
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
-            gnuplot.pngfigure('./image_pureData_tc_longtail/instance' .. tostring(i) .. '.png')
-            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
+            gnuplot.pngfigure('./image_tc_pureData/instance' .. tostring(i) .. '.png')
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'})
         else
             gnuplot.pngfigure('./image_tc/instance' .. tostring(i) .. '.png')
-            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'}, {'class '..tostring(y[2]), x_axis, draw2, '~'})
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'}, {'class '..tostring(y[2]), x_axis, draw2, '-'})
         end
         x_str = 'set xtics ("'
         for mm = 1, x:size(1)-1 do
@@ -157,6 +157,7 @@ for i = 1, n_data do
         end
         x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
         gnuplot.raw(x_str)
+        gnuplot.axis{'','',0,1}
         gnuplot.plotflush()
     end
     final_pred = final_pred/math.ceil(x:size(1)/opt.seq_length)

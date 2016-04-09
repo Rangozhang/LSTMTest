@@ -1,5 +1,5 @@
 --[[
-This model concatenate the intermediate info. and feed to the second layer
+This model use a maxpooling in the middle
 --]]
 require 'nn'
 require 'nngraph'

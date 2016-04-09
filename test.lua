@@ -139,10 +139,10 @@ for i = 1, n_data do
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
             gnuplot.pngfigure('./image_pureData/instance' .. tostring(i) .. '.png')
-            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'})
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'})
         else
             gnuplot.pngfigure('./image/instance' .. tostring(i) .. '.png')
-            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '~'}, {'class '..tostring(y[2]), x_axis, draw2, '~'})
+            gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'}, {'class '..tostring(y[2]), x_axis, draw2, '-'})
         end
         x_str = 'set xtics ("'
         for mm = 1, x:size(1)-1 do
@@ -150,6 +150,7 @@ for i = 1, n_data do
         end
         x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
         gnuplot.raw(x_str)
+        gnuplot.axis{'','',0,1}
         gnuplot.plotflush()
     end
     final_pred = final_pred/x:size(1)
