@@ -1,3 +1,6 @@
+--[[
+This model use a maxpooling in the middle
+--]]
 require 'nn'
 require 'nngraph'
 require 'optim'
@@ -33,7 +36,7 @@ cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'last layer"s number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 10,'number of full passes through the training data')
+cmd:option('-max_epochs', 4,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -111,7 +114,7 @@ else
     if opt.model == 'lstm' then
         interm_size = opt.rnn_size
         protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
-        protos.rnn2 = LSTM.lstm(interm_size*opt.seq_length, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
+        protos.rnn2 = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -224,15 +227,27 @@ function eval_split(split_index, max_batches)
             level_output[1][t] = lst[#lst]
         end
 
+        local temporalPooling = nn.TemporalMaxPooling(3):cuda()
+        
         -- merge
         local merged_output = {}
+        local concate_res = {}
         for t=1, opt.seq_length do
-            merged_output[t] = torch.zeros(opt.batch_size, interm_size*opt.seq_length):cuda()  
+            merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+            local out_sz = level_output[1][1]:size()
             for tt=1, opt.seq_length do
-                merged_output[t][{{}, {(tt-1)*interm_size+1, tt*interm_size}}]:add(level_output[1][(t-1)*opt.seq_length+tt])
+                local out_t = torch.reshape(level_output[1][(t-1)*opt.seq_length+tt], 1, out_sz[1], out_sz[2])
+                if tt==1 then
+                    concate_res[t] = out_t
+                else
+                    concate_res[t] = torch.cat(concate_res[t], out_t, 1)
+                end
             end
+            concate_res[t] = concate_res[t]:transpose(1, 2)
+            local maxpooling_input = temporalPooling:forward(concate_res[t])
+            merged_output[t]:copy(torch.squeeze(maxpooling_input))
         end
-    
+        
         -- second level
         for t=1,  opt.seq_length do 
             clones.rnn2[t]:evaluate() 
@@ -269,6 +284,12 @@ function feval(x)
         y = y:float():cuda()
     end
 
+    local temporalPooling = {}
+    for ind = 1, opt.seq_length do
+        temporalPooling[ind] = nn.TemporalMaxPooling(3):cuda()
+    end
+
+
     -- this is for random dropping a few entries' gradients
     d_rate = 0.5
     randdroping_mask = y:clone()
@@ -297,11 +318,21 @@ function feval(x)
 
     -- merge
     local merged_output = {}
+    local concate_res = {}
     for t=1, opt.seq_length do
-        merged_output[t] = torch.zeros(opt.batch_size, interm_size*opt.seq_length):cuda()  
+        merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+        local out_sz = level_output[1][1]:size()
         for tt=1, opt.seq_length do
-            merged_output[t][{{}, {(tt-1)*interm_size+1, tt*interm_size}}]:add(level_output[1][(t-1)*opt.seq_length+tt])
+            local out_t = torch.reshape(level_output[1][(t-1)*opt.seq_length+tt], 1, out_sz[1], out_sz[2])
+            if tt==1 then
+                concate_res[t] = out_t
+            else
+                concate_res[t] = torch.cat(concate_res[t], out_t, 1)
+            end
         end
+        concate_res[t] = concate_res[t]:transpose(1, 2)
+        local maxpooling_input = temporalPooling[t]:forward(concate_res[t])
+        merged_output[t]:copy(torch.squeeze(maxpooling_input))
     end
     
     -- second level
@@ -323,7 +354,7 @@ function feval(x)
     drnn_state[1] = {[opt.seq_length^2] = clone_list(init_state, true)} -- clones the size and zeros it
     drnn_state[2] = {[opt.seq_length] = clone_list(init_state, true)} -- clones the size and zeros it
 
-    local dinterm_val = {[opt.seq_length] = torch.zeros(opt.batch_size, interm_size*opt.seq_length)}
+    local dinterm_out = {[opt.seq_length] = torch.zeros(opt.batch_size, interm_size*opt.seq_length)}
 
     -- second level
     for t=opt.seq_length,1,-1 do
@@ -336,16 +367,27 @@ function feval(x)
             if k > 1 then -- k >= 1 is gradient on states
                 drnn_state[2][t-1][k-1] = v -- reverse as the forward one
             else
-                dinterm_val[t] = v
+                dinterm_out[t] = v
             end
+        end
+    end
+
+    -- maxpooling level
+    local dinterm_in = {}
+    for t=1, opt.seq_length do
+        local dout_mp = dinterm_out[t]
+        local din_mp = temporalPooling[t]:backward(concate_res[t], dout_mp):transpose(1, 2)
+        local din_mp_split = din_mp:split(1, 1)
+        for i = 1, opt.seq_length do
+            dinterm_in[(t-1)*opt.seq_length+i] = torch.squeeze(din_mp_split[i])
         end
     end
 
     -- first level
     for t=opt.seq_length^2,1,-1 do
-        local derv_ind = math.floor((t-1)/opt.seq_length) + 1
-        local doutput_t = dinterm_val[derv_ind][{{}, 
-            {interm_size*((t-1)%opt.seq_length)+1, interm_size*((t-1)%opt.seq_length+1)}}]:clone()
+        -- local derv_ind = math.floor((t-1)/opt.seq_length) + 1
+        -- local doutput_t = dinterm_out[derv_ind][{{}, {interm_size*((t-1)%opt.seq_length)+1, interm_size*((t-1)%opt.seq_length+1)}}]:clone()
+        local doutput_t = dinterm_in[t]
         --table.insert(drnn_state[1][t], doutput_t)
         local rs_size = #drnn_state[1][t]
         drnn_state[1][t][rs_size] = drnn_state[1][t][rs_size]+doutput_t
@@ -408,7 +450,7 @@ for i = 1, iterations do
             print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
         end
     end
-
+    
     -- every now and then or on last iteration
     if is_new_epoch and epoch % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
