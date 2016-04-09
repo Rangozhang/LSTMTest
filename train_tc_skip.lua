@@ -1,4 +1,3 @@
-
 require 'nn'
 require 'nngraph'
 require 'optim'
