@@ -19,7 +19,7 @@ cmd:text('Train a character-level language model')
 cmd:text()
 cmd:text('Options')
 -- data tinyshakespeare
-cmd:option('-data_dir','data/test','data directory. Should contain the file input.txt with input data')
+cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
 cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
@@ -43,13 +43,12 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-eval_val_every', 1 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
-cmd:option('-lossfilter', 0, '1: only backward through the ground truth entry 2: cutting plane algorithm')
 cmd:text()
 
 -- parse input params
@@ -261,6 +260,14 @@ function feval(x)
         x = x:cl()
         y = y:cl()
     end
+
+    -- this is for random dropping a few entries' gradients
+    d_rate = 0.5
+    randdroping_mask = y:clone()
+    chosen_mask = torch.randperm(10)[{{1,math.floor(opt.n_class*d_rate)}}]:cuda()
+    chosen_mask = chosen_mask:repeatTensor(y:size(1), 1)
+    randdroping_mask:scatter(2, chosen_mask, 1)
+
     ------------------- forward pass -------------------
     local rnn_state = {[0] = init_state_global}
     local predictions = {}           -- softmax outputs
@@ -272,7 +279,7 @@ function feval(x)
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
         predictions[t] = lst[#lst] -- last element is the prediction
-        loss = loss + clones.criterion[t]:forward(predictions[t], y)
+        loss = loss + clones.criterion[t]:forward(predictions[t]:cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
@@ -282,14 +289,14 @@ function feval(x)
     for t=opt.seq_length,1,-1 do
         -- backprop through loss, and softmax/linear
         local doutput_t = clones.criterion[t]:backward(predictions[t], y)
-        if opt.lossfilter == 1 then
-            doutput_t = torch.cmul(doutput_t, y)
-        elseif opt.lossfilter == 2 then 
+        --[[
+        if opt.lossfilter == 2 then 
             _, max_ind = torch.abs(y-predictions[t]):max(2)
             max_mat = predictions[t]:clone():fill(0)
             max_mat:scatter(2, max_ind, 1)
             doutput_t = torch.cmul(doutput_t, max_mat)
         end
+        --]]
         --print(doutput_t)
         table.insert(drnn_state[t], doutput_t)
         -- still don't know why dlst[1] is empty
@@ -297,7 +304,7 @@ function feval(x)
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[t-1] = {}
         for k,v in pairs(dlst) do
-            if k > 1 then -- k == 1 is gradient on x, which we dont need
+            if k > 1 then
                 -- note we do k-1 because first item is dembeddings, and then follow the 
                 -- derivatives of the state, starting at index 2. I know...
                 -- Since the input is x, pre_h, pre_c for two layers
@@ -337,7 +344,7 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local epoch = 1
 for i = 1, iterations do
-    local new_epoch = math.floor(i / loader.ntrain)
+    local new_epoch = math.ceil(i / loader.ntrain)
     local is_new_epoch = false
     if new_epoch > epoch then 
         epoch = new_epoch

@@ -21,7 +21,7 @@ cmd:text('Train a character-level language model')
 cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
-cmd:option('-data_dir','data/test')
+cmd:option('-data_dir','data/test_')
 cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
@@ -74,6 +74,9 @@ local first_two = 0.0
 
 protos.rnn:evaluate()
 
+tmp_num = 0
+tmp_val = 0.0
+
 for i = 1, n_data do
     xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
@@ -111,6 +114,9 @@ for i = 1, n_data do
         rnn_state[t] = {}
         for i = 1, #current_state do table.insert(rnn_state[t], lst[i]) end
         prediction = lst[#lst]
+        tmp_num = tmp_num + 1
+        tmp_val = tmp_val + prediction:sum()
+        --print(prediction:sum())
         draw1[t] = prediction[{1, y[1]}]
         if opt.OverlappingData then
             draw2[t] = prediction[{1, y[2]}]
@@ -207,6 +213,9 @@ for i = 1, n_data do
         end
     end
 end
+
+print("Look at this")
+print(tmp_val / tmp_num)
 
 if not opt.OverlappingData then
     accuracy_for_each_class = torch.cdiv(accuracy_for_each_class, n_data_for_each_class)

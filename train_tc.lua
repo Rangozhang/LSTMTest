@@ -19,13 +19,13 @@ cmd:text('Train a character-level language model')
 cmd:text()
 cmd:text('Options')
 -- data tinyshakespeare
-cmd:option('-data_dir','data/test','data directory. Should contain the file input.txt with input data')
+cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
 cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 1, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
-cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
+cmd:option('-nbatches', 5000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
@@ -111,9 +111,9 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        interm_size = 16
+        interm_size = opt.rnn_size
         protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
-        protos.rnn2 = LSTM.lstm(interm_size*opt.seq_length, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn2 = LSTM.lstm(interm_size*opt.seq_length, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -271,6 +271,13 @@ function feval(x)
         y = y:float():cuda()
     end
 
+    -- this is for random dropping a few entries' gradients
+    d_rate = 0.5
+    randdroping_mask = y:clone()
+    chosen_mask = torch.randperm(10)[{{1,math.floor(opt.n_class*d_rate)}}]:cuda()
+    chosen_mask = chosen_mask:repeatTensor(y:size(1), 1)
+    randdroping_mask:scatter(2, chosen_mask, 1)
+
     ------------------- forward pass -------------------
     local rnn_state = {}
     local level_output = {}
@@ -287,7 +294,7 @@ function feval(x)
         local lst = clones.rnn1[t]:forward{x_OneHot, unpack(rnn_state[1][t-1])}
         rnn_state[1][t] = {}
         for i=1,#init_state do table.insert(rnn_state[1][t], lst[i]) end 
-        level_output[1][t] = lst[#lst]
+        level_output[1][t] = lst[#init_state]
     end
 
     -- merge
@@ -306,7 +313,7 @@ function feval(x)
         rnn_state[2][t] = {}
         for i=1,#init_state do table.insert(rnn_state[2][t], lst[i]) end 
         level_output[2][t] = lst[#lst]
-        loss = loss + clones.criterion[t]:forward(level_output[2][t], y)
+        loss = loss + clones.criterion[t]:forward(level_output[2][t]:cmul(randdroping_mask), y)
     end
     
     -- the loss is the average loss across time steps
@@ -341,7 +348,9 @@ function feval(x)
         local derv_ind = math.floor((t-1)/opt.seq_length) + 1
         local doutput_t = dinterm_val[derv_ind][{{}, 
             {interm_size*((t-1)%opt.seq_length)+1, interm_size*((t-1)%opt.seq_length+1)}}]:clone()
-        table.insert(drnn_state[1][t], doutput_t)
+        --table.insert(drnn_state[1][t], doutput_t)
+        local rs_size = #drnn_state[1][t]
+        drnn_state[1][t][rs_size] = drnn_state[1][t][rs_size]+doutput_t
         local dlst = clones.rnn1[t]:backward({x[{{}, t}], unpack(rnn_state[1][t-1])}, drnn_state[1][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[1][t-1] = {}
@@ -372,7 +381,7 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local epoch = 1
 for i = 1, iterations do
-    local new_epoch = math.floor(i / iterations_per_epoch) + 1
+    local new_epoch = math.ceil(i / iterations_per_epoch)
     local is_new_epoch = false
     if new_epoch > epoch then 
         epoch = new_epoch
