@@ -49,7 +49,7 @@ cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on va
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
-cmd:option('-gpuid',3,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',2,'which gpu to use. -1 = use CPU')
 cmd:text()
 
 -- parse input params
@@ -59,7 +59,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('train.log')
+trainLogger = optim.Logger('train_mp.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -440,7 +440,7 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 train.log.eps train.png')
+    os.execute('convert -density 200 train_mp.log.eps train_mp.png')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
@@ -456,7 +456,7 @@ for i = 1, iterations do
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
 
-        local savefile = string.format('%s/tc_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/mp_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos

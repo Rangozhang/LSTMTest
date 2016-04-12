@@ -59,7 +59,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('train.log')
+trainLogger = optim.Logger('train_hl.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -113,7 +113,8 @@ else
     protos = {}
     if opt.model == 'lstm' then
         interm_size = opt.rnn_size
-        protos.rnn1 = LSTM.lstm(vocab_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        input_size = vocab_size * 3
+        protos.rnn1 = LSTM.lstm(input_size, interm_size, opt.rnn_size, opt.num_layers, opt.dropout)
         protos.rnn2 = LSTM.lstm(interm_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
     --[[
     -- discard gru and rnn temporarily
@@ -216,12 +217,28 @@ function eval_split(split_index, max_batches)
         end
         
         -- forward pass
-        
+
+        -- Temporal Conv + Hole algorithm
+        local hole_input = {}
+        local x_OneHot = {}
+        for t=1, opt.seq_length^2 do
+            x_OneHot[t] = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
+        end
+        for t=1, opt.seq_length^2 do
+            hole_input[t] = x_OneHot[t] --torch.zeros(opt.batch_size, input_size)
+            for tt=t-2, t-4, -2 do
+                if tt > 0 then
+                    hole_input[t] = torch.cat(x_OneHot[tt], hole_input[t], 2)
+                else 
+                    hole_input[t] = torch.cat(torch.zeros(opt.batch_size, vocab_size):cuda(), hole_input[t],  2)
+                end
+            end
+        end
+       
         -- first level
         for t=1,  opt.seq_length^2 do 
             clones.rnn1[t]:evaluate() 
-            local x_OneHot = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
-            local lst = clones.rnn1[t]:forward{x_OneHot, unpack(rnn_state[1][t-1])}
+            local lst = clones.rnn1[t]:forward{hole_input[t], unpack(rnn_state[1][t-1])}
             rnn_state[1][t] = {}
             for i=1,#init_state do table.insert(rnn_state[1][t], lst[i]) end 
             level_output[1][t] = lst[#lst]
@@ -230,10 +247,10 @@ function eval_split(split_index, max_batches)
         local temporalPooling = nn.TemporalMaxPooling(3):cuda()
         
         -- merge
-        local merged_output = {}
+        local maxpooling_output = {}
         local concate_res = {}
         for t=1, opt.seq_length do
-            merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+            maxpooling_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
             local out_sz = level_output[1][1]:size()
             for tt=1, opt.seq_length do
                 local out_t = torch.reshape(level_output[1][(t-1)*opt.seq_length+tt], 1, out_sz[1], out_sz[2])
@@ -243,15 +260,13 @@ function eval_split(split_index, max_batches)
                     concate_res[t] = torch.cat(concate_res[t], out_t, 1)
                 end
             end
-            concate_res[t] = concate_res[t]:transpose(1, 2)
-            local maxpooling_input = temporalPooling:forward(concate_res[t])
-            merged_output[t]:copy(torch.squeeze(maxpooling_input))
+            maxpooling_output[t]:copy(torch.squeeze(temporalPooling:forward(concate_res[t]:transpose(1, 2))))
         end
         
         -- second level
         for t=1,  opt.seq_length do 
             clones.rnn2[t]:evaluate() 
-            local lst = clones.rnn2[t]:forward{merged_output[t], unpack(rnn_state[2][t-1])}
+            local lst = clones.rnn2[t]:forward{maxpooling_output[t], unpack(rnn_state[2][t-1])}
             rnn_state[2][t] = {}
             for i=1,#init_state do table.insert(rnn_state[2][t], lst[i]) end 
             level_output[2][t] = lst[#lst]
@@ -289,7 +304,6 @@ function feval(x)
         temporalPooling[ind] = nn.TemporalMaxPooling(3):cuda()
     end
 
-
     -- this is for random dropping a few entries' gradients
     d_rate = 0.5
     randdroping_mask = y:clone()
@@ -306,35 +320,52 @@ function feval(x)
     end
     local loss = 0
 
-    -- first level
+    -- Temporal Conv + Hole algorithm
+    local hole_input = {}
+    local x_OneHot = {}
+    for t=1, opt.seq_length^2 do
+        x_OneHot[t] = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
+    end
+    for t=1, opt.seq_length^2 do
+        hole_input[t] = x_OneHot[t] --torch.zeros(opt.batch_size, input_size)
+        for tt=t-2, t-4, -2 do
+            if tt > 0 then
+                hole_input[t] = torch.cat(x_OneHot[tt], hole_input[t], 2)
+            else 
+                hole_input[t] = torch.cat(torch.zeros(opt.batch_size, vocab_size):cuda(), hole_input[t],  2)
+            end
+        end
+    end
+
+    -- first level LSTM
     for t=1,  opt.seq_length^2 do 
         clones.rnn1[t]:training() 
-        local x_OneHot = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
-        local lst = clones.rnn1[t]:forward{x_OneHot, unpack(rnn_state[1][t-1])}
+        local lst = clones.rnn1[t]:forward{hole_input[t], unpack(rnn_state[1][t-1])}
         rnn_state[1][t] = {}
         for i=1,#init_state do table.insert(rnn_state[1][t], lst[i]) end 
         level_output[1][t] = lst[#init_state]
     end
 
-    -- merge
-    local merged_output = {}
+    -- maxpooling
+    local maxpooling_output = {}
     local concate_res = {}
     for t=1, opt.seq_length do
-        merged_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
+        maxpooling_output[t] = torch.zeros(opt.batch_size, interm_size):cuda()  
         local out_sz = level_output[1][1]:size()
         for tt=1, opt.seq_length do
             local out_t = torch.reshape(level_output[1][(t-1)*opt.seq_length+tt], 1, out_sz[1], out_sz[2])
             if tt==1 then concate_res[t] = out_t
             else concate_res[t] = torch.cat(concate_res[t], out_t, 1) end
         end
-        local maxpooling_input = temporalPooling[t]:forward(concate_res[t]:transpose(1, 2))
-        merged_output[t]:copy(torch.squeeze(maxpooling_input))
+        concate_res[t] = concate_res[t]:transpose(1, 2)
+        local maxpooling_input = temporalPooling[t]:forward(concate_res[t])
+        maxpooling_output[t]:copy(torch.squeeze(maxpooling_input))
     end
     
-    -- second level
+    -- second level LSTM
     for t=1, opt.seq_length do 
         clones.rnn2[t]:training() 
-        local lst = clones.rnn2[t]:forward{merged_output[t], unpack(rnn_state[2][t-1])}
+        local lst = clones.rnn2[t]:forward{maxpooling_output[t], unpack(rnn_state[2][t-1])}
         rnn_state[2][t] = {}
         for i=1,#init_state do table.insert(rnn_state[2][t], lst[i]) end 
         level_output[2][t] = lst[#lst]
@@ -356,7 +387,7 @@ function feval(x)
     for t=opt.seq_length,1,-1 do
         local doutput_t = clones.criterion[t]:backward(level_output[num_level][t], y)
         table.insert(drnn_state[2][t], doutput_t)
-        local dlst = clones.rnn2[t]:backward({merged_output[t], unpack(rnn_state[2][t-1])}, drnn_state[2][t])
+        local dlst = clones.rnn2[t]:backward({maxpooling_output[t], unpack(rnn_state[2][t-1])}, drnn_state[2][t])
         -- dlst is dlst_dI, need to feed to the previous time step
         drnn_state[2][t-1] = {}
         for k,v in pairs(dlst) do
@@ -436,7 +467,7 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 train.log.eps train.png')
+    os.execute('convert -density 200 train_hl.log.eps train_hl.png')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
@@ -452,7 +483,7 @@ for i = 1, iterations do
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
 
-        local savefile = string.format('%s/tc_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/hole_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos

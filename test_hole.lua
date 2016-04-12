@@ -94,24 +94,37 @@ for i = 1, n_data do
         level_output[l] = {}
     end
     
+    local temporalPooling = nn.TemporalMaxPooling(3):cuda()
     local interm_size = 32
     local final_pred = torch.zeros(opt.n_class):cuda()
-    local interm_val = torch.zeros(1, interm_size*opt.seq_length):cuda()
+    local interm_val = torch.zeros(3, interm_size):cuda()
+    local x_OneHot = {}
     for t = 1, x:size(1) do
-        local x_OneHot = OneHot(vocab_size):forward(torch.Tensor{x[t]}):cuda()
-        local lst = protos.rnn1:forward{x_OneHot, unpack(rnn_state[1][t-1])}
+        x_OneHot[t] = OneHot(vocab_size):forward(torch.Tensor{x[t]}):cuda()
+    end
+    for t = 1, x:size(1) do
+        local x_input = x_OneHot[t]
+        for tt=t-2, t-4, -2 do
+            if tt > 0 then
+                x_input = torch.cat(x_OneHot[tt], x_input, 2)
+            else 
+                x_input = torch.cat(torch.zeros(1, vocab_size):cuda(), x_input,  2)
+            end
+        end
+        local lst = protos.rnn1:forward{x_input, unpack(rnn_state[1][t-1])}
         rnn_state[1][t] = {}
         for i = 1, #current_state do table.insert(rnn_state[1][t], lst[i]) end
         level_output[1][t] = lst[#lst]
-        interm_val[{{},{((t-1)%opt.seq_length)*interm_size+1, ((t-1)%opt.seq_length+1)*interm_size}}]:add(level_output[1][t])
+        interm_val[(t-1)%opt.seq_length+1]:copy(level_output[1][t])
+        --interm_val[{{},{((t-1)%opt.seq_length)*interm_size+1, ((t-1)%opt.seq_length+1)*interm_size}}]:add(level_output[1][t])
         if t%opt.seq_length == 0 or t == x:size(1) then
-            local denominator = (t%opt.seq_length == 0) and opt.seq_length or t%opt.seq_length
+            local out_pooling = temporalPooling:forward(interm_val)
+            local denominator = (t-1)%opt.seq_length+1
             --interm_val:div(denominator)
             local t2_ind = math.floor((t-1)/opt.seq_length)+1
-            local lst = protos.rnn2:forward{interm_val, unpack(rnn_state[2][t2_ind-1])}
+            local lst = protos.rnn2:forward{out_pooling, unpack(rnn_state[2][t2_ind-1])}
             rnn_state[2][t2_ind] = {}
             for i = 1, #current_state do table.insert(rnn_state[2][t2_ind], lst[i]) end
-            interm_val:zero()
             local prediction = lst[#lst]
             for tt = 0, denominator-1 do
                 draw1[t-tt] = prediction[{1, y[1]}]
@@ -134,6 +147,7 @@ for i = 1, n_data do
             
             -- Take average
             final_pred = final_pred + prediction
+            interm_val:zero()
             --[[
             -- Take Maximum
             for w = 1, opt.n_class do
@@ -145,10 +159,10 @@ for i = 1, n_data do
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
         if not opt.OverlappingData then
-            gnuplot.pngfigure('./image_pureData_tc/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_pureData_hl/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'})
         else
-            gnuplot.pngfigure('./image_tc/instance' .. tostring(i) .. '.png')
+            gnuplot.pngfigure('./image_hl/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'}, {'class '..tostring(y[2]), x_axis, draw2, '-'})
         end
         x_str = 'set xtics ("'
