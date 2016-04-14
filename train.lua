@@ -31,7 +31,7 @@ cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
-cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
@@ -43,8 +43,8 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 1 ,'every how many epochs should we evaluate on validation data?')
-cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
+cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-checkpoint_dir', 'cv3', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -129,7 +129,7 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -386,6 +386,7 @@ for i = 1, iterations do
         local checkpoint = {}
         checkpoint.protos = protos
         checkpoint.opt = opt
+        --[[
         checkpoint.train_losses = train_losses
         checkpoint.val_loss = val_loss
         checkpoint.val_losses = val_losses
@@ -393,6 +394,7 @@ for i = 1, iterations do
         checkpoint.epoch = epoch
         checkpoint.vocab = loader.vocab_mapping
         checkpoint.loader = loader
+        --]]
         torch.save(savefile, checkpoint)
     end
 

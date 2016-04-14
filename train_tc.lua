@@ -27,7 +27,7 @@ cmd:option('-rnn_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 1, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
-cmd:option('-nbatches', 500, 'number of training batches loader prepare')
+cmd:option('-nbatches', 5000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
@@ -49,7 +49,7 @@ cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on va
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
-cmd:option('-gpuid',3,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid',1,'which gpu to use. -1 = use CPU')
 cmd:text()
 
 -- parse input params
@@ -59,7 +59,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('train.log')
+trainLogger = optim.Logger('train_tc.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -123,7 +123,7 @@ else
         protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
     --]]
     end
-    protos.criterion = nn.BCECriterion()
+    protos.criterion = nn.CrossEntropyCriterion() --BCECriterion()
 end
 
 -- the initial state of the cell/hidden states
@@ -273,11 +273,13 @@ function feval(x)
     end
 
     -- this is for random dropping a few entries' gradients
+    --[[
     d_rate = 0.5
     randdroping_mask = y:clone()
     chosen_mask = torch.randperm(10)[{{1,math.floor(opt.n_class*d_rate)}}]:cuda()
     chosen_mask = chosen_mask:repeatTensor(y:size(1), 1)
     randdroping_mask:scatter(2, chosen_mask, 1)
+    --]]
 
     ------------------- forward pass -------------------
     local rnn_state = {}
@@ -314,7 +316,7 @@ function feval(x)
         rnn_state[2][t] = {}
         for i=1,#init_state do table.insert(rnn_state[2][t], lst[i]) end 
         level_output[2][t] = lst[#lst]
-        loss = loss + clones.criterion[t]:forward(level_output[2][t]:cmul(randdroping_mask), y)
+        loss = loss + clones.criterion[t]:forward(level_output[2][t], y) --:cmul(randdroping_mask), y)
     end
     
     -- the loss is the average loss across time steps
@@ -401,7 +403,7 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 train.log.eps train.png')
+    os.execute('convert -density 200 train_tc.log.eps train_tc.png')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then

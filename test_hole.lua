@@ -26,13 +26,16 @@ cmd:option('-batch_size',128)
 cmd:option('-seq_length', 3)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
-cmd:option('-OverlappingData', true)
-cmd:option('-draw', false)
+cmd:option('-overlap', 0)
+cmd:option('-draw', 0)
 cmd:text()
 
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
+
+opt.overlap = (opt.overlap == 1)
+opt.draw = (opt.draw == 1)
 
 checkpoint = torch.load(opt.model)
 protos = checkpoint.protos
@@ -53,7 +56,7 @@ if opt.gpuid >= 0 then
 end
 
 local split_sizes = {0.90,0.05,0.05}
-loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches, opt.OverlappingData)
+loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length^2, split_sizes, opt.n_class, opt.nbatches, opt.overlap)
 n_data = loader.test_n_data
 vocab_mapping = loader.vocab_mapping
 vocab_size = loader.vocab_size
@@ -129,7 +132,7 @@ for i = 1, n_data do
             for tt = 0, denominator-1 do
                 draw1[t-tt] = prediction[{1, y[1]}]
             end
-            if opt.OverlappingData then
+            if opt.overlap then
                 for tt = 0, denominator-1 do
                     draw2[t-tt] = prediction[{1, y[2]}]
                 end
@@ -158,7 +161,7 @@ for i = 1, n_data do
     end
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
-        if not opt.OverlappingData then
+        if not opt.overlap then
             gnuplot.pngfigure('./image_pureData_hl/instance' .. tostring(i) .. '.png')
             gnuplot.plot({'class '..tostring(y[1]), x_axis, draw1, '-'})
         else
@@ -192,7 +195,7 @@ for i = 1, n_data do
         k_ = k_ + 1
         return k_
     end)
-    if not opt.OverlappingData then
+    if not opt.overlap then
         fail_list = {}
         fail_list_ind = 1
         y = y[1]
@@ -236,7 +239,7 @@ for i = 1, n_data do
     end
 end
 
-if not opt.OverlappingData then
+if not opt.overlap then
     accuracy_for_each_class = torch.cdiv(accuracy_for_each_class, n_data_for_each_class)
 
     print("Accuracy for each class:")
