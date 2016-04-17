@@ -127,9 +127,6 @@ for i = 1, n_data do
                     draw2[t-tt] = prediction[{1, y[2]}]
                 end
             end
-            for tt = 0, denominator-1 do
-                draw1[t-tt] = prediction[{1, y[1]}]
-            end
             for tt = denominator-1,0,-1 do
                 tmp_str = vocab[x[t-tt]] .. "\t"
                 for m = 1, prediction:size(2) do
@@ -163,7 +160,7 @@ for i = 1, n_data do
         end
         x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
         gnuplot.raw(x_str)
-        gnuplot.axis{'','',0,1}
+        --gnuplot.axis{'','',0,1}
         gnuplot.plotflush()
     end
     final_pred = final_pred/math.ceil(x:size(1)/opt.seq_length)

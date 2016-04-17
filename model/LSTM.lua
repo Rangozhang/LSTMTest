@@ -58,8 +58,8 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
       if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
       local proj = nn.Linear(rnn_size, output_size)(top_h):annotate{name='decoder'}
       --local logsoft = nn.LogSoftMax()(proj)
-      local sig = nn.Sigmoid()(proj)
-      table.insert(outputs, sig)
+      --local sig = nn.Sigmoid()(proj)
+      table.insert(outputs, proj)
   end
 
   return nn.gModule(inputs, outputs)
