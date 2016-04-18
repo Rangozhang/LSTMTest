@@ -6,6 +6,7 @@ require 'lfs'
 
 require 'util.OneHot'
 require 'util.misc'
+require 'model.LSTMLayer'
 local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
@@ -33,7 +34,7 @@ cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start d
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
-cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -129,7 +130,16 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
+        --protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
+        rnn_opt = {}
+        rnn_opt.withDecoder = true
+        rnn_opt.input_size = vocab_size
+        rnn_opt.output_size = opt.n_class
+        rnn_opt.rnn_size = opt.rnn_size
+        rnn_opt.num_layers = opt.num_layers
+        rnn_opt.dropout = opt.dropout
+        rnn_opt.seq_length = opt.seq_length
+        protos.rnn = nn.LSTMLayer(rnn_opt)
     --[[
     -- discard gru and rnn temporarily
     elseif opt.model == 'gru' then
@@ -139,18 +149,9 @@ else
     --]]
     end
     protos.criterion = nn.BCECriterion()
-end
-
--- the initial state of the cell/hidden states
-init_state = {}
-for L=1,opt.num_layers do
-    local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
-    if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
-    if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
-    table.insert(init_state, h_init:clone())
-    if opt.model == 'lstm' then
-        table.insert(init_state, h_init:clone())
-    end
+    --for t = 1, opt.seq_length do
+    --    protos.criterion[t] = nn.BCECriterion()
+    --end
 end
 
 -- ship the model to the GPU if desired
@@ -161,38 +162,12 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
     for k,v in pairs(protos) do v:cl() end
 end
 
--- put the above things into one flattened parameters tensor
--- why use model_utils???? since it is able to flatten two networks at the same time
-params, grad_params = model_utils.combine_all_parameters(protos.rnn)
--- params, grad_params = protos.rnn:getParameters()
+--params, grad_params = model_utils.combine_all_parameters(protos.rnn)
+params, grad_params = protos.rnn:getParameters()
 --
 -- initialization
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers  -- just uniform sampling
-end
--- initialize the LSTM forget gates with slightly higher biases to encourage remembering in the beginning
-if opt.model == 'lstm' then
-    for layer_idx = 1, opt.num_layers do
-        --print(protos.rnn.forwardnodes)
-        for _,node in ipairs(protos.rnn.forwardnodes) do -- where to get forwardnodes? in nngraph
-            if node.data.annotations.name == "i2h_" .. layer_idx then
-                print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
-                -- the gates are, in order, i,f,o,g, so f is the 2nd block of weights
-                -- which means f is from 128+1 to 256
-                node.data.module.bias[{{opt.rnn_size+1, 2*opt.rnn_size}}]:fill(1.0)
-            end
-        end
-    end
-end
-
-print('number of parameters in the model: ' .. params:nElement())
--- make a bunch of clones after flattening, as that reallocates memory
--- unroll time steps of rnn and criterion
--- This is for Unrolling
-clones = {}
-for name,proto in pairs(protos) do
-    print('cloning ' .. name)
-    clones[name] = model_utils.clone_many_times(proto, opt.seq_length, not proto.parameters)
 end
 
 -- evaluate the loss over an entire split
@@ -236,13 +211,6 @@ function eval_split(split_index, max_batches)
     return loss
 end
 
--- do fwd/bwd and return loss, grad_params
-local init_state_global = clone_list(init_state)
--- still don't know how to change grad_params, 
--- How copy_many_times and combine_all_parameters work
--- How can grad_params change when clones change
--- grad_params is being accumulated through time steps, which means the gradient for each time step is accumulated for the whole sequence length
--- And the clones is like a pointer, which just change the original protos.rnn automatically
 function feval(x)
     if x ~= params then
         params:copy(x)
@@ -251,6 +219,12 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1)
+    x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
+    for t = 1, opt.seq_length do
+        x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
+    end
+    x = x_input
+
     if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
@@ -262,67 +236,29 @@ function feval(x)
     end
 
     -- this is for random dropping a few entries' gradients
+    --[[
     d_rate = 0.5
     randdroping_mask = y:clone()
     chosen_mask = torch.randperm(10)[{{1,math.floor(opt.n_class*d_rate)}}]:cuda()
     chosen_mask = chosen_mask:repeatTensor(y:size(1), 1)
     randdroping_mask:scatter(2, chosen_mask, 1)
+    --]]
 
     ------------------- forward pass -------------------
-    local rnn_state = {[0] = init_state_global}
     local predictions = {}           -- softmax outputs
     local loss = 0
-    for t=1,opt.seq_length do -- 1 to 50
-        clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-        local x_OneHot = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
-        local lst = clones.rnn[t]:forward{x_OneHot, unpack(rnn_state[t-1])}
-        rnn_state[t] = {}
-        for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
-        predictions[t] = lst[#lst] -- last element is the prediction
-        loss = loss + clones.criterion[t]:forward(predictions[t]:cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
+    protos.rnn:training()
+    local predictions = protos.rnn:forward(x)
+    local dpredictions = predictions:clone():fill(0)
+    for t = 1, opt.seq_length do
+        loss = loss + protos.criterion:forward(predictions[t], y)
+        dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
+        --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
-    -- initialize gradient at time t to be zeros (there's no influence from future)
-    local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones, i.e. just clone the size and assign all entries to zeros
-    for t=opt.seq_length,1,-1 do
-        -- backprop through loss, and softmax/linear
-        local doutput_t = clones.criterion[t]:backward(predictions[t], y)
-        --[[
-        if opt.lossfilter == 2 then 
-            _, max_ind = torch.abs(y-predictions[t]):max(2)
-            max_mat = predictions[t]:clone():fill(0)
-            max_mat:scatter(2, max_ind, 1)
-            doutput_t = torch.cmul(doutput_t, max_mat)
-        end
-        --]]
-        --print(doutput_t)
-        table.insert(drnn_state[t], doutput_t)
-        -- still don't know why dlst[1] is empty
-        print(drnn_state[t])
-        io.read()
-        local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
-        -- dlst is dlst_dI, need to feed to the previous time step
-        drnn_state[t-1] = {}
-        for k,v in pairs(dlst) do
-            if k > 1 then
-                -- note we do k-1 because first item is dembeddings, and then follow the 
-                -- derivatives of the state, starting at index 2. I know...
-                -- Since the input is x, pre_h, pre_c for two layers
-                -- And output is cur_h, cur_c for two layers and output softlog
-                drnn_state[t-1][k-1] = v
-                -- reverse as the forward one
-            end
-        end
-    end
-    -- print 'Out of sequence'
-    ------------------------ misc ----------------------
-    -- transfer final state to initial state (BPTT)
-    init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
-    -- grad_params:div(opt.seq_length) -- this line should be here but since we use rmsprop it would have no effect. Removing for efficiency
-    -- clip gradient element-wise
-    grad_params:clamp(-opt.grad_clip, opt.grad_clip)
+    local dimg = protos.rnn:backward(x, dpredictions)
     return loss, grad_params
 end
 
@@ -332,15 +268,7 @@ print("start training:")
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
---[[
-local optimState = {
-    learningRate = opt.learningRate,
-    learningRateDecay = 0.0,
-                    momentum = opt.momentum,
-                         dampening = 0.0,
-                              weightDecay = opt.weightDecay
-}
---]]
+
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil

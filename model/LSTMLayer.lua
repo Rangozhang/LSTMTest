@@ -1,7 +1,6 @@
 require 'nn'
-local utils = require 'misc.utils'
-local net_utils = require 'misc.net_utils'
-local LSTM = require 'LSTM'
+package.path = "../?.lua;" .. package.path
+local LSTM = require 'model.LSTM'
 
 -------------------------------------------------------------------------------
 -- Language Model core
@@ -20,6 +19,14 @@ function layer:__init(opt)
   self.seq_length = opt.seq_length
   self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.withDecoder)
   self:_createInitState(1) -- will be lazily resized later during forward passes
+  for layer_idx = 1, opt.num_layers do
+    for _,node in ipairs(self.core.forwardnodes) do
+        if node.data.annotations.name == "i2h_" .. layer_idx then
+             print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+             node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
+        end
+    end
+  end
 end
 
 function layer:_createInitState(batch_size)
@@ -129,7 +136,7 @@ function layer:sample(input)
 end
 
 function layer:updateGradInput(input, gradOutput)
-  local dinputs = input:clone():zeros() -- grad on input images
+  local dinputs = input:clone():zero() -- grad on input images
 
   local dstate = {[self.seq_length] = self.init_state}
   for t=self.seq_length,1,-1 do
@@ -137,11 +144,11 @@ function layer:updateGradInput(input, gradOutput)
     local dout = {}
     for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
     table.insert(dout, gradOutput[t])
-    local dinputs = self.clones[t]:backward(self.inputs[t], dout)
+    local dinputs_t = self.clones[t]:backward(self.inputs[t], dout)
     -- split the gradient to xt and to state
-    dinputs[t] = dinputs[1] -- first element is the input vector
+    dinputs[t] = dinputs_t[1] -- first element is the input vector
     dstate[t-1] = {} -- copy over rest to state grad
-    for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs[k]) end
+    for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs_t[k]) end
   end
 
   self.gradInput = dinputs

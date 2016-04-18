@@ -144,7 +144,7 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
             batch_label[j] = label[ind_batch[j]]
        end
         self.x_batches[i] = batch_data:clone()
-        self.y_batches[i] = batch_label:clone()--OneHot(n_class):forward(batch_label:clone())
+        self.y_batches[i] = OneHot(n_class):forward(batch_label:clone())
     end
 
     -- lets try to be helpful here
