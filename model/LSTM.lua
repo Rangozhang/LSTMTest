@@ -18,6 +18,7 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
     -- c,h from previos timesteps
     local prev_h = inputs[L*2+1]
     local prev_c = inputs[L*2]
+    
     -- the input to this layer
     if L == 1 then 
       x = inputs[1]
@@ -47,7 +48,7 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
       })
     -- gated cells form the output
     local next_h = nn.CMulTable()({out_gate, nn.Tanh()(next_c)})
-    
+
     table.insert(outputs, next_c)
     table.insert(outputs, next_h)
   end

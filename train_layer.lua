@@ -1,4 +1,3 @@
-
 require 'nn'
 require 'nngraph'
 require 'optim'
@@ -6,7 +5,7 @@ require 'lfs'
 
 require 'util.OneHot'
 require 'util.misc'
-require 'model.LSTMLayer'
+require 'model.LSTM_layer'
 local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
@@ -28,13 +27,13 @@ cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',1e-2,'learning rate')
+cmd:option('-learning_rate',5e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
-cmd:option('-batch_size', 2,'number of sequences to train on in parallel')
+cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
@@ -46,10 +45,9 @@ cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv3', 'output directory where checkpoints get written')
-cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-savefile','lstmLayer','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
-cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
 cmd:text()
 
 -- parse input params
@@ -63,7 +61,7 @@ trainLogger = optim.Logger('train.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
-if opt.gpuid >= 0 and opt.opencl == 0 then
+if opt.gpuid >= 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
     if not ok then print('package cunn not found!') end
@@ -75,25 +73,6 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
     else
         print('If cutorch and cunn are installed, your CUDA toolkit may be improperly configured.')
         print('Check your CUDA toolkit installation, rebuild cutorch and cunn, and try again.')
-        print('Falling back on CPU mode')
-        opt.gpuid = -1 -- overwrite user setting
-    end
-end
---]]
-
--- initialize clnn/cltorch for training on the GPU and fall back to CPU gracefully
-if opt.gpuid >= 0 and opt.opencl == 1 then
-    local ok, cunn = pcall(require, 'clnn')
-    local ok2, cutorch = pcall(require, 'cltorch')
-    if not ok then print('package clnn not found!') end
-    if not ok2 then print('package cltorch not found!') end
-    if ok and ok2 then
-        print('using OpenCL on GPU ' .. opt.gpuid .. '...')
-        cltorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
-        torch.manualSeed(opt.seed)
-    else
-        print('If cltorch and clnn are installed, your OpenCL driver may be improperly configured.')
-        print('Check your OpenCL driver installation, check output of clinfo command, and try again.')
         print('Falling back on CPU mode')
         opt.gpuid = -1 -- overwrite user setting
     end
@@ -140,13 +119,6 @@ else
         rnn_opt.dropout = opt.dropout
         rnn_opt.seq_length = opt.seq_length
         protos.rnn = nn.LSTMLayer(rnn_opt)
-    --[[
-    -- discard gru and rnn temporarily
-    elseif opt.model == 'gru' then
-        protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
-    elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
-    --]]
     end
     protos.criterion = nn.BCECriterion()
     --for t = 1, opt.seq_length do
@@ -155,16 +127,13 @@ else
 end
 
 -- ship the model to the GPU if desired
-if opt.gpuid >= 0 and opt.opencl == 0 then
+if opt.gpuid >= 0 then
     for k,v in pairs(protos) do v:cuda() end
-end
-if opt.gpuid >= 0 and opt.opencl == 1 then
-    for k,v in pairs(protos) do v:cl() end
 end
 
 --params, grad_params = model_utils.combine_all_parameters(protos.rnn)
 params, grad_params = protos.rnn:getParameters()
---
+
 -- initialization
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers  -- just uniform sampling
@@ -183,27 +152,24 @@ function eval_split(split_index, max_batches)
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(split_index)
-        if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
-            -- have to convert to float because integers can't be cuda()'d
+        local x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
+        for t = 1, opt.seq_length do
+            x_input[t] = OneHot(vocab_size):forward(x[{{}, t}])
+        end
+        x = x_input
+
+        if opt.gpuid >= 0 then
             x = x:float():cuda()
             y = y:float():cuda()
         end
-        if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-            x = x:cl()
-            y = y:cl()
+
+        protos.rnn:training()
+        local predictions = protos.rnn:forward(x)
+        for t = 1, opt.seq_length do
+            loss = loss + protos.criterion:forward(predictions[t], y)
         end
-        -- forward pass
-        for t=1,opt.seq_length do
-            clones.rnn[t]:evaluate() -- for dropout proper functioning
-            local x_OneHot = OneHot(vocab_size):forward(x[{{}, t}]):cuda()
-            local lst = clones.rnn[t]:forward{x_OneHot, unpack(rnn_state[t-1])}
-            rnn_state[t] = {}
-            for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
-            prediction = lst[#lst] 
-            loss = loss + clones.criterion[t]:forward(prediction, y)
-        end
-        -- carry over lstm state
-        rnn_state[0] = rnn_state[#rnn_state]
+
+        --rnn_state[0] = rnn_state[#rnn_state] did we need this?
         print(i .. '/' .. n .. '...')
     end
 
@@ -219,20 +185,16 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1)
-    x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
+    local x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
     for t = 1, opt.seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
     end
     x = x_input
 
-    if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
+    if opt.gpuid >= 0 then
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
         y = y:float():cuda()
-    end
-    if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-        x = x:cl()
-        y = y:cl()
     end
 
     -- this is for random dropping a few entries' gradients
@@ -265,8 +227,6 @@ end
 -- start optimization here
 
 print("start training:")
-train_losses = {}
-val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
 
 local iterations = opt.max_epochs * loader.ntrain
@@ -286,7 +246,6 @@ for i = 1, iterations do
     local time = timer:time().real
 
     local train_loss = loss[1] -- the loss is inside a list, pop it
-    train_losses[i] = train_loss
 
     trainLogger:add{
         ['Loss'] = train_loss
@@ -295,6 +254,7 @@ for i = 1, iterations do
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 train.log.eps train.png')
+    os.execute('rm train.log.eps')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
@@ -309,22 +269,12 @@ for i = 1, iterations do
     if is_new_epoch and epoch % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
-        val_losses[i] = val_loss
 
-        local savefile = string.format('%s/lm_%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
         checkpoint.opt = opt
-        --[[
-        checkpoint.train_losses = train_losses
-        checkpoint.val_loss = val_loss
-        checkpoint.val_losses = val_losses
-        checkpoint.i = i
-        checkpoint.epoch = epoch
-        checkpoint.vocab = loader.vocab_mapping
-        checkpoint.loader = loader
-        --]]
         torch.save(savefile, checkpoint)
     end
 
