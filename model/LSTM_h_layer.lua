@@ -1,14 +1,17 @@
 require 'nn'
 package.path = "../?.lua;" .. package.path
 local LSTM = require 'model.LSTM'
+local LSTM_mc = require 'model.LSTM_mc'
 
 -------------------------------------------------------------------------------
 -- Language Model core
 -------------------------------------------------------------------------------
 
-local layer, parent = torch.class('nn.LSTMLayer', 'nn.Module')
+local layer, parent = torch.class('nn.LSTMHierarchicalLayer', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)
+
+  self.is1vsA = opt.is1vsA or false
 
   self.withDecoder = opt.withDecoder or true -- if adding with a decoder to output_size
   self.input_size = opt.input_size
@@ -17,21 +20,31 @@ function layer:__init(opt)
   self.num_layers = opt.num_layers
   local dropout = opt.dropout
   self.seq_length = opt.seq_length
-  self.core = {}
-  for t = 1, self.output_size do
-      self.core[t] = LSTM.lstm(self.input_size, 1, self.rnn_size, self.num_layers, dropout, self.withDecoder)
-  end
-  self:_createInitState(1) -- will be lazily resized later during forward passes
-  for t = 1, self.output_size do
+  self.group = self.output_size      -- assign each group only one output: 1vsAll
+  if self.is1vsA then 
+      self.core = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.group, self.withDecoder)
       for layer_idx = 1, opt.num_layers do
-        for _,node in ipairs(self.core[t].forwardnodes) do
-            if node.data.annotations.name == "i2h_" .. layer_idx then
+        for group_idx = 1, self.group do
+            for _,node in ipairs(self.core.forwardnodes) do
+                if node.data.annotations.name == "i2h_" .. group_idx .. '_' .. layer_idx then
+                     print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                     node.data.module.bias[{{self.rnn_size/self.group+1, 2*self.rnn_size/self.group}}]:fill(1.0)
+                end
+            end
+        end
+      end
+  else 
+      self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.withDecoder) 
+      for layer_idx = 1, opt.num_layers do
+        for _,node in ipairs(self.core.forwardnodes) do
+            if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
                  print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
                  node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
             end
         end
       end
   end
+  self:_createInitState(1) -- will be lazily resized later during forward passes
 end
 
 function layer:_createInitState(batch_size)
@@ -55,44 +68,39 @@ function layer:createClones()
   print('constructing clones')
   self.clones = {self.core}
   for t=2,self.seq_length do -- t == 1 is self.core itself
-      self.clones[t] = {}
-      for cls = 1, self.output_size do
-        self.clones[t][cls] = self.core[cls]:clone('weight', 'bias', 'gradWeight', 'gradBias')
-      end
+    self.clones[t] = self.core:clone('weight', 'bias', 'gradWeight', 'gradBias')
   end
 end
 
 function layer:getModulesList()
-  return self.core
+  return {self.core}
 end
 
 function layer:parameters()
+  -- we only have two internal modules, return their params
+  local p1,g1 = self.core:parameters()
+
   local params = {}
+  for k,v in pairs(p1) do table.insert(params, v) end
+  
   local grad_params = {}
-  for t = 1, self.output_size do
-      local p1,g1 = self.core[t]:parameters()
-      for k,v in pairs(p1) do table.insert(params, v) end
-      for k,v in pairs(g1) do table.insert(grad_params, v) end
-  end
+  for k,v in pairs(g1) do table.insert(grad_params, v) end
+
+  -- todo: invalidate self.clones if params were requested?
+  -- what if someone outside of us decided to call getParameters() or something?
+  -- (that would destroy our parameter sharing because clones 2...end would point to old memory)
+
   return params, grad_params
 end
 
 function layer:training()
   if self.clones == nil then self:createClones() end -- create these lazily if needed
-  for i, c in pairs(self.clones) do 
-      for j, m in pairs(c) do
-          m:training() 
-      end
-  end
+  for k,v in pairs(self.clones) do v:training() end
 end
 
 function layer:evaluate()
   if self.clones == nil then self:createClones() end -- create these lazily if needed
-  for i, c in pairs(self.clones) do 
-      for j, m in pairs(c) do
-          m:evaluate() 
-      end
-  end
+  for k,v in pairs(self.clones) do v:evaluate() end
 end
 
 function layer:updateOutput(input)
@@ -107,9 +115,7 @@ function layer:updateOutput(input)
   
   self:_createInitState(batch_size)
 
-  self.state = {}
-  for t = 1, self.output_size do
-    {[0] = self.init_state}
+  self.state = {[0] = self.init_state}
   self.inputs = {}
   for t=1,self.seq_length do
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}

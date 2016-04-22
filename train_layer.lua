@@ -29,7 +29,7 @@ cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',3e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
-cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
@@ -118,6 +118,7 @@ else
         rnn_opt.num_layers = opt.num_layers
         rnn_opt.dropout = opt.dropout
         rnn_opt.seq_length = opt.seq_length
+        rnn_opt.is1vsA = true
         protos.rnn = nn.LSTMLayer(rnn_opt)
     end
     protos.criterion = nn.BCECriterion()
@@ -235,7 +236,6 @@ print("start training:")
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
 
 local iterations = opt.max_epochs * loader.ntrain
-local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local epoch = 1
 for i = 1, iterations do
@@ -262,12 +262,10 @@ for i = 1, iterations do
     os.execute('rm train.log.eps')
 
     -- exponential learning rate decay
-    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
-        if epoch % opt.learning_rate_decay_every == 0 then
-            local decay_factor = opt.learning_rate_decay
-            optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-            print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
-        end
+    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
+        local decay_factor = opt.learning_rate_decay
+        optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
+        print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
     end
 
     -- every now and then or on last iteration
