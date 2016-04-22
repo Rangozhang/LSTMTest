@@ -1,6 +1,7 @@
 require 'nn'
 package.path = "../?.lua;" .. package.path
 local LSTM = require 'model.LSTM'
+local LSTM_mc = require 'model.LSTM_mc'
 
 -------------------------------------------------------------------------------
 -- Language Model core
@@ -10,6 +11,8 @@ local layer, parent = torch.class('nn.LSTMLayer', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)
 
+  self.is1vsA = opt.is1vsA or false
+
   self.withDecoder = opt.withDecoder or true -- if adding with a decoder to output_size
   self.input_size = opt.input_size
   self.output_size = opt.output_size
@@ -17,17 +20,32 @@ function layer:__init(opt)
   self.num_layers = opt.num_layers
   local dropout = opt.dropout
   self.seq_length = opt.seq_length
-  self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.withDecoder)
-  self:_createInitState(1) -- will be lazily resized later during forward passes
-  for layer_idx = 1, opt.num_layers do
-    for _,node in ipairs(self.core.forwardnodes) do
-        if node.data.annotations.name == "i2h_" .. layer_idx then
-             print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
-             node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
+  self.group = self.output_size      -- assign each group only one output: 1vsAll
+  if self.is1vsA then 
+      self.core = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.group, self.withDecoder)
+      for layer_idx = 1, opt.num_layers do
+        for group_idx = 1, self.group do
+            for _,node in ipairs(self.core.forwardnodes) do
+                if node.data.annotations.name == "i2h_" .. group_idx .. '_' .. layer_idx then
+                     print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                     node.data.module.bias[{{self.rnn_size/self.group+1, 2*self.rnn_size/self.group}}]:fill(1.0)
+                end
+            end
         end
-    end
+      end
+  else 
+      self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.withDecoder) 
+      for layer_idx = 1, opt.num_layers do
+        for _,node in ipairs(self.core.forwardnodes) do
+            if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
+                 print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                 node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
+            end
+        end
+      end
   end
-end
+  self:_createInitState(1) -- will be lazily resized later during forward passes
+  end
 
 function layer:_createInitState(batch_size)
   -- contruct the hiden state, has to be all zeros

@@ -31,13 +31,15 @@ function LSTM_mc.lstm(input_size, output_size, rnn_size_all, n, dropout, group, 
           x = inputs[1]
           input_size_L = input_size
         else 
-          x = outputs[(L-1)*2] 
+          local lower_h = inputs[(L-1)*2]
+          local lower_h_tbl= nn.SplitTable(2)(nn.Reshape(group, rnn_size)(lower_h))
+          x = nn.SelectTable(t)(lower_h_tbl)
           if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
           input_size_L = rnn_size
         end
         -- evaluate the input sums at once for efficiency
-        local i2h = nn.Linear(input_size_L, 4 * rnn_size)(x):annotate{name='i2h_'..L}
-        local h2h = nn.Linear(rnn_size, 4 * rnn_size)(nn.SelectTable(t)(prev_h_tbl)):annotate{name='h2h_'..L}
+        local i2h = nn.Linear(input_size_L, 4 * rnn_size)(x):annotate{name='i2h_'..t..'_'..L}
+        local h2h = nn.Linear(rnn_size, 4 * rnn_size)(nn.SelectTable(t)(prev_h_tbl)):annotate{name='h2h_'..t..'_'..L}
         local all_input_sums = nn.CAddTable()({i2h, h2h})
 
         local reshaped = nn.Reshape(4, rnn_size)(all_input_sums)
@@ -68,7 +70,7 @@ function LSTM_mc.lstm(input_size, output_size, rnn_size_all, n, dropout, group, 
       -- set up the decoder
       local top_h = outputs[#outputs]
       if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
-      local proj = nn.Linear(rnn_size, output_size)(top_h):annotate{name='decoder'}
+      local proj = nn.Linear(rnn_size_all, output_size)(top_h):annotate{name='decoder'}
       --local logsoft = nn.LogSoftMax()(proj)
       local sig = nn.Sigmoid()(proj)
       table.insert(outputs, sig)

@@ -13,3 +13,4 @@ print(m:forward(input))
 
 LSTM_mc = require 'LSTM_mc'
 mm = LSTM_mc.lstm(10, 5, 10, 2, 0, 5, true)
+--graph.dot(mm.fg, 'MLP')

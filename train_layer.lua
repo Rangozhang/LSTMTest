@@ -21,13 +21,13 @@ cmd:text('Options')
 -- data tinyshakespeare
 cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 32, 'size of LSTM internal state')
+cmd:option('-rnn_size', 60, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, gru or rnn')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',5e-2,'learning rate')
+cmd:option('-learning_rate',3e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
@@ -211,6 +211,9 @@ function feval(x)
     local loss = 0
     protos.rnn:training()
     local predictions = protos.rnn:forward(x)
+    --print(predictions)
+    --print(y)
+    --io.read()
     local dpredictions = predictions:clone():fill(0)
     for t = 1, opt.seq_length do
         loss = loss + protos.criterion:forward(predictions[t], y)
@@ -220,6 +223,8 @@ function feval(x)
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
+    --print(dpredictions)
+    --io.read()
     local dimg = protos.rnn:backward(x, dpredictions)
     return loss, grad_params
 end
