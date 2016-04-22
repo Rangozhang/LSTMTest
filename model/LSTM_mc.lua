@@ -3,6 +3,7 @@ local LSTM_mc = {}
 function LSTM_mc.lstm(input_size, output_size, rnn_size_all, n, dropout, group,  withDecoder)
   dropout = dropout or 0 
   withDecoder = withDecoder or false
+  assert(rnn_size_all % group == 0, 'Cells must be distributed evenly')
   rnn_size = rnn_size_all / group
 
   -- there will be 2*n+1 inputs

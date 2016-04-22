@@ -13,7 +13,6 @@ function layer:__init(opt)
 
   self.is1vsA = opt.is1vsA or false
 
-  self.withDecoder = opt.withDecoder or true -- if adding with a decoder to output_size
   self.input_size = opt.input_size
   self.output_size = opt.output_size
   self.rnn_size = opt.rnn_size
@@ -22,7 +21,7 @@ function layer:__init(opt)
   self.seq_length = opt.seq_length
   self.group = self.output_size      -- assign each group only one output: 1vsAll
   if self.is1vsA then 
-      self.core = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.group, self.withDecoder)
+      self.core = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.group, true)
       for layer_idx = 1, opt.num_layers do
         for group_idx = 1, self.group do
             for _,node in ipairs(self.core.forwardnodes) do
@@ -34,7 +33,7 @@ function layer:__init(opt)
         end
       end
   else 
-      self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.withDecoder) 
+      self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, true) 
       for layer_idx = 1, opt.num_layers do
         for _,node in ipairs(self.core.forwardnodes) do
             if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
