@@ -31,9 +31,15 @@ function layer:__init(opt)
   ------------------------------------
   
   ---------- Temporal Conv -----------
-  self.tmp_conv = {}
+  self.subsampling = {}
   for t = 1, self.num_layers do
-    self.subsampling[t] = nn.TemporalMaxPooling(self.conv_size, self.stride)
+    local kW = self.conv_size
+    local dW = self.stride
+    if t == 1 then 
+        kW = 1
+        dW = 1
+    end
+    self.subsampling[t] = nn.TemporalMaxPooling(kW, dW)
     --self.subsampling[t] = nn.TemporalConvolution(self.rnn_size, self.rnn_size, self.conv_size, self.stride)
     --self.subsampling[t] = nn.TemporalAttention()
   end
@@ -90,18 +96,23 @@ function layer:createClones()
   -- construct the net clones
   print('constructing clones')
   self.clones = {}
+  self.subsamplingClones = {}
   self.unroll_len[self.num_layers] = self.seq_length 
   for l = self.num_layers, 1, -1 do
-      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size end
+      if l ~= self.num_layers then 
+          self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size 
+      end
       self.clones[l] = {self.core[l]}
-      for t=2, self.unroll_len[l] do -- t == 1 is self.core itself
-        self.clones[l][t] = self.core[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
+      self.subsamplingClones[l] = {self.subsampling[l]}
+      for t=2, self.unroll_len[l] do
+          self.clones[l][t] = self.core[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
+          self.subsamplingClones[l][t] = self.subsampling[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
       end
   end
 end
 
 function layer:getModulesList()
-  return {self.core}
+  return {self.core, self.subsampling}
 end
 
 function layer:parameters()
@@ -110,6 +121,10 @@ function layer:parameters()
   
   for l = 1, self.num_layers do
       local p1,g1 = self.core[l]:parameters()
+      for k,v in pairs(p1) do table.insert(params, v) end
+      for k,v in pairs(g1) do table.insert(grad_params, v) end
+
+      p1, g1 = self.subsampling[l]:parameters()
       for k,v in pairs(p1) do table.insert(params, v) end
       for k,v in pairs(g1) do table.insert(grad_params, v) end
   end
@@ -151,8 +166,10 @@ function layer:updateOutput(input)
   self.interm_am = {}  -- after merge
   for l = 1, self.num_layers do
       self.inputs[l] = {}
-      self.interm_pm[l] = torch.zeros(batch_size, self.unroll_len[l], self.rnn_size)
-      self.interm_am[l] = torch.zeros(batch_size, self.unroll_len[l+1], self.rnn_size)
+      if l ~= self.num_layers then
+        self.interm_pm[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
+        self.interm_am[l] = torch.zeros(self.unroll_len[l+1], batch_size, self.rnn_size)
+      end
 
       -- output_gen
       for t=1, self.unroll_len[l] do
@@ -161,7 +178,7 @@ function layer:updateOutput(input)
           -- forward the network
           local out = self.clones[t]:forward(self.inputs[t])
           -- process the outputs
-          if l ~= self.num_layers then self.interm_pm[l][{{},{t},{}}] = out[self.num_state]  -- which is h
+          if l ~= self.num_layers then self.interm_pm[l][t] = out[self.num_state]  -- which is h
           else self.output[t] = out[self.num_state+1] end
           if self.state[t] == nil then self.state[t] = {} end
           -- each time only insert one c and one h
@@ -170,12 +187,8 @@ function layer:updateOutput(input)
 
       -- temporal conv
       if l ~= self.num_layers then
-          local cur = 1
           for t=1, self.unroll_len[l+1] do
-              for k=cur, cur+self.conv_size do
-                  self.interm_am[l][t] =  
-              end
-              cur = cur + stride
+              self.interm_am[l] = self.subsampling[l]:forward(self.interm_pm[l]:transpose(1, 2)):transpose(1, 2)
           end
           --seq = self.interm_
       end
