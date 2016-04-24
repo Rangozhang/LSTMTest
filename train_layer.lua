@@ -23,7 +23,7 @@ cmd:option('-data_dir','data/test_','data directory. Should contain the file inp
 -- model params
 cmd:option('-rnn_size', 60, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
-cmd:option('-model', 'lstm', 'lstm, gru or rnn')
+cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
@@ -44,8 +44,7 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
-cmd:option('-checkpoint_dir', 'cv3', 'output directory where checkpoints get written')
-cmd:option('-savefile','lstmLayer','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:text()
@@ -57,7 +56,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('train.log')
+trainLogger = optim.Logger('train_'..opt.model..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -108,23 +107,22 @@ if string.len(opt.init_from) > 0 then
 else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
-    if opt.model == 'lstm' then
-        --protos.rnn = LSTM.lstm(vocab_size, opt.n_class, opt.rnn_size, opt.num_layers, opt.dropout, true)
-        rnn_opt = {}
-        rnn_opt.withDecoder = true
-        rnn_opt.input_size = vocab_size
-        rnn_opt.output_size = opt.n_class
-        rnn_opt.rnn_size = opt.rnn_size
-        rnn_opt.num_layers = opt.num_layers
-        rnn_opt.dropout = opt.dropout
-        rnn_opt.seq_length = opt.seq_length
-        rnn_opt.is1vsA = true
+    rnn_opt = {}
+    rnn_opt.input_size = vocab_size
+    rnn_opt.output_size = opt.n_class
+    rnn_opt.rnn_size = opt.rnn_size
+    rnn_opt.num_layers = opt.num_layers
+    rnn_opt.dropout = opt.dropout
+    rnn_opt.seq_length = opt.seq_length
+    if opt.model == 'lstm' or opt.model == '1vsA_lstm' then
+        if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true end
         protos.rnn = nn.LSTMLayer(rnn_opt)
+    elseif opt.model == 'Hierarchical_lstm' then
+        rnn_opt.conv_size = 3
+        rnn_opt.stride = 3
+        protos.rnn = nn.LSTMHierarchicalLayer(rnn_opt)
     end
     protos.criterion = nn.BCECriterion()
-    --for t = 1, opt.seq_length do
-    --    protos.criterion[t] = nn.BCECriterion()
-    --end
 end
 
 -- ship the model to the GPU if desired
@@ -258,8 +256,8 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 train.log.eps train.png')
-    os.execute('rm train.log.eps')
+    os.execute('convert -density 200 '..'train_'..opt.model..'.log.eps train_'..opt.model..'.png')
+    os.execute('rm train_'..opt.model..'.log.eps')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
@@ -273,7 +271,7 @@ for i = 1, iterations do
         -- evaluate loss on validation data
         local val_loss = eval_split(2) -- 2 = validation
 
-        local savefile = string.format('%s/%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.model, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos

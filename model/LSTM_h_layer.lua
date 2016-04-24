@@ -24,32 +24,47 @@ function layer:__init(opt)
   self.group = self.output_size      
   -------------------------------------
   
-  -------- Hierarchical param ---------
+  -------- Hierarchical param --------
   self.conv_size = opt.conv_size
   self.stride = opt.stride
+  self.unroll_len = {}
   ------------------------------------
   
-  if self.is1vsA then 
-      self.core = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, self.group, true)
-      for layer_idx = 1, opt.num_layers do
-        for group_idx = 1, self.group do
-            for _,node in ipairs(self.core.forwardnodes) do
-                if node.data.annotations.name == "i2h_" .. group_idx .. '_' .. layer_idx then
-                     print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
-                     node.data.module.bias[{{self.rnn_size/self.group+1, 2*self.rnn_size/self.group}}]:fill(1.0)
+  ---------- Temporal Conv -----------
+  self.tmp_conv = {}
+  for t = 1, self.num_layers do
+    self.subsampling[t] = nn.TemporalMaxPooling(self.conv_size, self.stride)
+    --self.subsampling[t] = nn.TemporalConvolution(self.rnn_size, self.rnn_size, self.conv_size, self.stride)
+    --self.subsampling[t] = nn.TemporalAttention()
+  end
+  -----------------------------------
+  
+  self.core = {}
+  for t = 1, self.num_layers do
+      local withDecoder = false
+      if t == self.num_layers then withDecoder = true end
+      if self.is1vsA then 
+          self.core[t] = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, 1, dropout, self.group, withDecoder)
+          for layer_idx = 1, opt.num_layers do
+            for group_idx = 1, self.group do
+                for _,node in ipairs(self.core.forwardnodes) do
+                    if node.data.annotations.name == "i2h_" .. group_idx .. '_' .. layer_idx then
+                         print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                         node.data.module.bias[{{self.rnn_size/self.group+1, 2*self.rnn_size/self.group}}]:fill(1.0)
+                    end
                 end
             end
-        end
-      end
-  else 
-      self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, self.num_layers, dropout, true)
-      for layer_idx = 1, opt.num_layers do
-        for _,node in ipairs(self.core.forwardnodes) do
-            if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
-                 print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
-                 node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
+          end
+      else 
+          self.core[t] = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, 1, dropout, withDecoder)
+          for layer_idx = 1, opt.num_layers do
+            for _,node in ipairs(self.core.forwardnodes) do
+                if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
+                     print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
+                     node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
+                end
             end
-        end
+          end
       end
   end
   self:_createInitState(1) -- will be lazily resized later during forward passes
@@ -74,9 +89,14 @@ end
 function layer:createClones()
   -- construct the net clones
   print('constructing clones')
-  self.clones = {self.core}
-  for t=2,self.seq_length do -- t == 1 is self.core itself
-    self.clones[t] = self.core:clone('weight', 'bias', 'gradWeight', 'gradBias')
+  self.clones = {}
+  self.unroll_len[self.num_layers] = self.seq_length 
+  for l = self.num_layers, 1, -1 do
+      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size end
+      self.clones[l] = {self.core[l]}
+      for t=2, self.unroll_len[l] do -- t == 1 is self.core itself
+        self.clones[l][t] = self.core[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
+      end
   end
 end
 
@@ -85,30 +105,32 @@ function layer:getModulesList()
 end
 
 function layer:parameters()
-  -- we only have two internal modules, return their params
-  local p1,g1 = self.core:parameters()
-
   local params = {}
-  for k,v in pairs(p1) do table.insert(params, v) end
-  
   local grad_params = {}
-  for k,v in pairs(g1) do table.insert(grad_params, v) end
-
-  -- todo: invalidate self.clones if params were requested?
-  -- what if someone outside of us decided to call getParameters() or something?
-  -- (that would destroy our parameter sharing because clones 2...end would point to old memory)
+  
+  for l = 1, self.num_layers do
+      local p1,g1 = self.core[l]:parameters()
+      for k,v in pairs(p1) do table.insert(params, v) end
+      for k,v in pairs(g1) do table.insert(grad_params, v) end
+  end
 
   return params, grad_params
 end
 
 function layer:training()
   if self.clones == nil then self:createClones() end -- create these lazily if needed
-  for k,v in pairs(self.clones) do v:training() end
+  for k,v in pairs(self.clones) do 
+      if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:training() end
+      else v:training() end
+  end
 end
 
 function layer:evaluate()
   if self.clones == nil then self:createClones() end -- create these lazily if needed
-  for k,v in pairs(self.clones) do v:evaluate() end
+  for k,v in pairs(self.clones) do 
+      if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:evaluate() end
+      else v:evaluate() end
+  end
 end
 
 function layer:updateOutput(input)
@@ -125,16 +147,39 @@ function layer:updateOutput(input)
 
   self.state = {[0] = self.init_state}
   self.inputs = {}
-  for t=1,self.seq_length do
-      self.inputs[t] = {seq[t],unpack(self.state[t-1])}
-      -- forward the network
-      local out = self.clones[t]:forward(self.inputs[t])
-      -- process the outputs
-      self.output[t] = out[self.num_state+1] -- last element is the output vector
-      self.state[t] = {} -- the rest is state
-      for i=1,self.num_state do table.insert(self.state[t], out[i]) end
-  end
+  self.interm_pm = {}  -- before merge
+  self.interm_am = {}  -- after merge
+  for l = 1, self.num_layers do
+      self.inputs[l] = {}
+      self.interm_pm[l] = torch.zeros(batch_size, self.unroll_len[l], self.rnn_size)
+      self.interm_am[l] = torch.zeros(batch_size, self.unroll_len[l+1], self.rnn_size)
 
+      -- output_gen
+      for t=1, self.unroll_len[l] do
+          -- inputs are input, c, h
+          self.inputs[l][t] = {seq[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
+          -- forward the network
+          local out = self.clones[t]:forward(self.inputs[t])
+          -- process the outputs
+          if l ~= self.num_layers then self.interm_pm[l][{{},{t},{}}] = out[self.num_state]  -- which is h
+          else self.output[t] = out[self.num_state+1] end
+          if self.state[t] == nil then self.state[t] = {} end
+          -- each time only insert one c and one h
+          for i=1,2 do table.insert(self.state[t], out[i]) end
+      end
+
+      -- temporal conv
+      if l ~= self.num_layers then
+          local cur = 1
+          for t=1, self.unroll_len[l+1] do
+              for k=cur, cur+self.conv_size do
+                  self.interm_am[l][t] =  
+              end
+              cur = cur + stride
+          end
+          --seq = self.interm_
+      end
+  end 
   return self.output
 end
 
