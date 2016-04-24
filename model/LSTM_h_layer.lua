@@ -97,9 +97,9 @@ function layer:createClones()
   print('constructing clones')
   self.clones = {}
   self.subsamplingClones = {}
-  self.unroll_len[self.num_layers] = self.seq_length 
   for l = self.num_layers, 1, -1 do
-      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size end
+      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l+1]-1)+self.conv_size 
+      else self.unroll_len[self.num_layers] = self.seq_length end
       self.clones[l] = {self.core[l]}
       self.subsamplingClones[l] = {self.subsampling[l]}
       for t=2, self.unroll_len[l] do
@@ -107,14 +107,21 @@ function layer:createClones()
           self.subsamplingClones[l][t] = self.subsampling[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
       end
   end
+  self.unroll_len[0] = self.stride*(self.unroll_len[1]-1)+self.conv_size
+  print("Unroll len for each layer")
+  for t = 0, self.num_layers do
+      print(self.unroll_len[t])
+  end
+  print("Waiting to input")
+  io.read()
 end
 
 function layer:getModulesList()
   return {self.core, self.subsampling}
 end
 
-function layer:getSeqLength()
-  return self.unroll_len[1]
+function layer:getInputSeqLength()
+  return self.unroll_len[0]
 end
 
 function layer:parameters()
@@ -161,7 +168,7 @@ function layer:evaluate()
 end
 
 function layer:updateOutput(input)
-  local seq = input --  * batch_size * input_size
+  local seq = input -- layer:getInputSeqLength() * batch_size * input_size
   if self.clones == nil then self:createClones() end
     -- lazily create clones on first forward pass
 
@@ -180,73 +187,99 @@ function layer:updateOutput(input)
       self.inputs[l] = {}
       self.LSTM_input[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
 
-      if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l+1], batch_size, self.rnn_size) end
+      if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size) end
 
-      -- temporal conv
-      for t=1, self.unroll_len[l] do
-          -- since for both maxpooling and temporalConvolution, the input must be batch_size x nInputframe x frame_size
-          
-          -- self.interm_val[l] = self.subsampling[l]:forward(self.LSTM_input[l]:transpose(1, 2)):transpose(1, 2)
-      end
+      -- Subsampling
+      -- since for both maxpooling and temporalConvolution, the input must be batch_size x nInputframe x frame_size
+      self.LSTM_input[l] = self.subsampling[l]:forward(self.interm_val[l-1]:transpose(1, 2)):transpose(1, 2)
 
-      -- output_gen
+      assert(self.LSTM_input[l]:size(1) == self.unroll_len[l], "The subsampling res is not consistent with pre-computed result")
+
+      -- LSTM
       for t=1, self.unroll_len[l] do
-          -- inputs are input, c, h
-          self.inputs[l][t] = {seq[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
+          -- inputs are input, c, h; Only input one h and c since each layer only has one layer
+          self.inputs[l][t] = {self.LSTM_input[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
           -- forward the network
           local out = self.clones[t]:forward(self.inputs[t])
           -- process the outputs
-          if l ~= self.num_layers then self.LSTM_input[l][t] = out[self.num_state]  -- which is h
+          if l ~= self.num_layers then self.interm_val[l][t] = out[self.num_state]  -- which is h
           else self.output[t] = out[self.num_state+1] end
           if self.state[t] == nil then self.state[t] = {} end
           -- each time only insert one c and one h
           for i=1,2 do table.insert(self.state[t], out[i]) end
       end
 
-      --seq = self.interm_
   end 
   return self.output
 end
 
 function layer:sample(input)
   local seq = input --input_seq_length * batch_size * input_size
+  if self.clones == nil then self:createClones() end
+    -- lazily create clones on first forward pass
+
+  --assert(seq:size(1) == self.seq_length)
+  assert(seq:size(3) == self.input_size)
   local batch_size = seq:size(2)
-  local input_seq_length = seq:size(1)
-  self.output:resize(input_seq_length, batch_size, self.output_size)
+  self.output:resize(self.seq_length, batch_size, self.output_size)
   
   self:_createInitState(batch_size)
 
   self.state = {[0] = self.init_state}
   self.inputs = {}
-  for t=1, input_seq_length do
-      self.inputs[t] = {seq[t],unpack(self.state[t-1])}
-      -- forward the network
-      local out = self.clones[1]:forward(self.inputs[t])
-      -- process the outputs
-      self.output[t] = out[self.num_state+1] -- last element is the output vector
-      self.state[t] = {} -- the rest is state
-      for i=1,self.num_state do table.insert(self.state[t], out[i]) end
-  end
+  self.LSTM_input = {}  -- after subsampling before LSTM
+  self.interm_val= {[0] = seq}  -- after LSTM
+  for l = 1, self.num_layers do
+      self.inputs[l] = {}
 
+      -- Subsampling
+      -- since for both maxpooling and temporalConvolution, the input must be batch_size x nInputframe x frame_size
+      self.LSTM_input[l] = self.subsampling[l]:forward(self.interm_val[l-1]:transpose(1, 2)):transpose(1, 2)
+
+      -- LSTM
+      local unroll_len = self.LSTM_input[l]:size(1)
+      for t=1, unroll_len do
+          -- inputs are input, c, h; Only input one h and c since each layer only has one layer
+          self.inputs[l][t] = {self.LSTM_input[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
+          -- forward the network
+          local out = self.clones[t]:forward(self.inputs[t])
+          -- process the outputs
+          if l ~= self.num_layers then self.interm_val[l][t] = out[self.num_state]  -- which is h
+          else self.output[t] = out[self.num_state+1] end
+          if self.state[t] == nil then self.state[t] = {} end
+          -- each time only insert one c and one h
+          for i=1,2 do table.insert(self.state[t], out[i]) end
+      end
+
+  end 
   return self.output
 end
 
 function layer:updateGradInput(input, gradOutput)
   local dinputs = input:clone():zero() -- grad on input images
-
   local dstate = {[self.seq_length] = self.init_state}
-  for t=self.seq_length,1,-1 do
-    -- concat state gradients and output vector gradients at time step t
-    local dout = {}
-    for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
-    table.insert(dout, gradOutput[t])
-    local dinputs_t = self.clones[t]:backward(self.inputs[t], dout)
-    -- split the gradient to xt and to state
-    dinputs[t] = dinputs_t[1] -- first element is the input vector
-    dstate[t-1] = {} -- copy over rest to state grad
-    for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs_t[k]) end
+  assert(self.unroll_len[self.num_layers] == self.seq_length, "unroll length for last layer should be equal to seq_length")
+
+  local dInterm_val = {[self.num_layers+1] = gradOutput}
+  for l = self.num_layers, 1, -1 do
+
+    -- LSTM
+    local dLSTM_input_l = torch.zeros(self.LSTM_input[l]:size())
+    for t = self.unroll_len[l], 1, -1 do
+      local dout = {} 
+      for k = 2*l-1, 2*l do table.insert(dout, dstate[t][k]) end
+      table.insert(dout, dInterm_val[l+1][t])
+      local dinputs_t = self.clones[t]:backward(self.inputs[l][t], dout)
+      dLSTM_input_l[t] = dinputs_t[1]
+      dstate[t-1] = {}
+      for k = 2, 3 do table.insert(dstate[t-1], dinputs_t[k]) end
+    end
+
+    -- Subsampling
+    dInterm_val[l] = self.subsamplingClones[l]:backward(self.interm_val[l]:transpose(1,2), dLSTM_input_l:transpose(1,2)):transpose(1,2)
+    assert(dInterm_val[l]:size(1) == self.unroll_len[l-1], "First interm_val dim should be the same as unroll_len[l-1]")
   end
 
-  self.gradInput = dinputs
+  self.gradInput = dInterm_val[1]
   return self.gradInput
 end
