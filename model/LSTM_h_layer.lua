@@ -99,9 +99,7 @@ function layer:createClones()
   self.subsamplingClones = {}
   self.unroll_len[self.num_layers] = self.seq_length 
   for l = self.num_layers, 1, -1 do
-      if l ~= self.num_layers then 
-          self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size 
-      end
+      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l]-1)+self.conv_size end
       self.clones[l] = {self.core[l]}
       self.subsamplingClones[l] = {self.subsampling[l]}
       for t=2, self.unroll_len[l] do
@@ -113,6 +111,10 @@ end
 
 function layer:getModulesList()
   return {self.core, self.subsampling}
+end
+
+function layer:getSeqLength()
+  return self.unroll_len[1]
 end
 
 function layer:parameters()
@@ -138,6 +140,11 @@ function layer:training()
       if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:training() end
       else v:training() end
   end
+  for k,v in pairs(self.subsamplingClones) do 
+      if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:training() end
+      else v:training() end
+  end
+
 end
 
 function layer:evaluate()
@@ -146,14 +153,19 @@ function layer:evaluate()
       if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:evaluate() end
       else v:evaluate() end
   end
+  for k,v in pairs(self.subsamplingClones) do 
+      if torch.type(v) == 'table' then for kk, vv in pairs(v) do vv:evaluate() end
+      else v:evaluate() end
+  end
+
 end
 
 function layer:updateOutput(input)
-  local seq = input -- seq_length * batch_size * input_size
+  local seq = input --  * batch_size * input_size
   if self.clones == nil then self:createClones() end
     -- lazily create clones on first forward pass
 
-  assert(seq:size(1) == self.seq_length)
+  --assert(seq:size(1) == self.seq_length)
   assert(seq:size(3) == self.input_size)
   local batch_size = seq:size(2)
   self.output:resize(self.seq_length, batch_size, self.output_size)
@@ -162,13 +174,19 @@ function layer:updateOutput(input)
 
   self.state = {[0] = self.init_state}
   self.inputs = {}
-  self.interm_pm = {}  -- before merge
-  self.interm_am = {}  -- after merge
+  self.LSTM_input = {}  -- after subsampling before LSTM
+  self.interm_val= {[0] = seq}  -- after LSTM
   for l = 1, self.num_layers do
       self.inputs[l] = {}
-      if l ~= self.num_layers then
-        self.interm_pm[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
-        self.interm_am[l] = torch.zeros(self.unroll_len[l+1], batch_size, self.rnn_size)
+      self.LSTM_input[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
+
+      if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l+1], batch_size, self.rnn_size) end
+
+      -- temporal conv
+      for t=1, self.unroll_len[l] do
+          -- since for both maxpooling and temporalConvolution, the input must be batch_size x nInputframe x frame_size
+          
+          -- self.interm_val[l] = self.subsampling[l]:forward(self.LSTM_input[l]:transpose(1, 2)):transpose(1, 2)
       end
 
       -- output_gen
@@ -178,20 +196,14 @@ function layer:updateOutput(input)
           -- forward the network
           local out = self.clones[t]:forward(self.inputs[t])
           -- process the outputs
-          if l ~= self.num_layers then self.interm_pm[l][t] = out[self.num_state]  -- which is h
+          if l ~= self.num_layers then self.LSTM_input[l][t] = out[self.num_state]  -- which is h
           else self.output[t] = out[self.num_state+1] end
           if self.state[t] == nil then self.state[t] = {} end
           -- each time only insert one c and one h
           for i=1,2 do table.insert(self.state[t], out[i]) end
       end
 
-      -- temporal conv
-      if l ~= self.num_layers then
-          for t=1, self.unroll_len[l+1] do
-              self.interm_am[l] = self.subsampling[l]:forward(self.interm_pm[l]:transpose(1, 2)):transpose(1, 2)
-          end
-          --seq = self.interm_
-      end
+      --seq = self.interm_
   end 
   return self.output
 end
