@@ -42,8 +42,14 @@ opt.draw = (opt.draw == 1)
 checkpoint = torch.load(opt.model)
 protos = checkpoint.protos
 
+--local debugger = require('fb.debugger')
+--debugger.enter()
+
 if opt.gpuid >= 0 then
-    for k,v in pairs(protos) do v:cuda() end
+    for k,v in pairs(protos) do 
+        print(torch.type(v))
+        v:cuda() 
+    end
 end
 
 local split_sizes = {0.90,0.05,0.05}

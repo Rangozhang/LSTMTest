@@ -33,12 +33,8 @@ function layer:__init(opt)
   ---------- Temporal Conv -----------
   self.subsampling = {}
   for t = 1, self.num_layers do
-    local kW = self.conv_size
-    local dW = self.stride
-    if t == 1 then 
-        kW = 1
-        dW = 1
-    end
+    local kW = self.conv_size[t]
+    local dW = self.stride[t]
     self.subsampling[t] = nn.TemporalMaxPooling(kW, dW)
     --self.subsampling[t] = nn.TemporalConvolution(self.rnn_size, self.rnn_size, self.conv_size, self.stride)
     --self.subsampling[t] = nn.TemporalAttention()
@@ -64,7 +60,7 @@ function layer:__init(opt)
       else 
           self.core[t] = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, 1, dropout, withDecoder)
           for layer_idx = 1, opt.num_layers do
-            for _,node in ipairs(self.core.forwardnodes) do
+            for _,node in ipairs(self.core[t].forwardnodes) do
                 if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
                      print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
                      node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
@@ -98,7 +94,7 @@ function layer:createClones()
   self.clones = {}
   self.subsamplingClones = {}
   for l = self.num_layers, 1, -1 do
-      if l ~= self.num_layers then self.unroll_len[l] = self.stride*(self.unroll_len[l+1]-1)+self.conv_size 
+      if l ~= self.num_layers then self.unroll_len[l] = self.stride[l+1]*(self.unroll_len[l+1]-1)+self.conv_size[l+1]
       else self.unroll_len[self.num_layers] = self.seq_length end
       self.clones[l] = {self.core[l]}
       self.subsamplingClones[l] = {self.subsampling[l]}
@@ -107,13 +103,12 @@ function layer:createClones()
           self.subsamplingClones[l][t] = self.subsampling[l]:clone('weight', 'bias', 'gradWeight', 'gradBias')
       end
   end
-  self.unroll_len[0] = self.stride*(self.unroll_len[1]-1)+self.conv_size
+  self.unroll_len[0] = self.stride[1]*(self.unroll_len[1]-1)+self.conv_size[1]
   print("Unroll len for each layer")
   for t = 0, self.num_layers do
       print(self.unroll_len[t])
   end
-  print("Waiting to input")
-  io.read()
+  print("End")
 end
 
 function layer:getModulesList()
@@ -134,8 +129,10 @@ function layer:parameters()
       for k,v in pairs(g1) do table.insert(grad_params, v) end
 
       p1, g1 = self.subsampling[l]:parameters()
-      for k,v in pairs(p1) do table.insert(params, v) end
-      for k,v in pairs(g1) do table.insert(grad_params, v) end
+      if p1 then
+          for k,v in pairs(p1) do table.insert(params, v) end
+          for k,v in pairs(g1) do table.insert(grad_params, v) end
+      end
   end
 
   return params, grad_params
@@ -188,8 +185,9 @@ function layer:updateOutput(input)
       self.LSTM_input[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
 
       if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size) end
-
+      
       -- Subsampling
+      -- WARNING: this is using subsampling instead of subsamplingClones[]
       -- since for both maxpooling and temporalConvolution, the input must be batch_size x nInputframe x frame_size
       self.LSTM_input[l] = self.subsampling[l]:forward(self.interm_val[l-1]:transpose(1, 2)):transpose(1, 2)
 
@@ -198,12 +196,16 @@ function layer:updateOutput(input)
       -- LSTM
       for t=1, self.unroll_len[l] do
           -- inputs are input, c, h; Only input one h and c since each layer only has one layer
-          self.inputs[l][t] = {self.LSTM_input[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
+          self.inputs[l][t] = {self.LSTM_input[l][t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
           -- forward the network
-          local out = self.clones[t]:forward(self.inputs[t])
+          local out = self.clones[l][t]:forward(self.inputs[l][t])
           -- process the outputs
-          if l ~= self.num_layers then self.interm_val[l][t] = out[self.num_state]  -- which is h
-          else self.output[t] = out[self.num_state+1] end
+          print(self.interm_val[l][t]:size())
+          print(out[#out]:size())
+          self.interm_val[l][t]:copy(out[#out])
+          io.read()
+          --if l ~= self.num_layers then self.interm_val[l][t] = out[#out]  -- which is h
+          --else self.output[t] = out[self.num_state+1] end
           if self.state[t] == nil then self.state[t] = {} end
           -- each time only insert one c and one h
           for i=1,2 do table.insert(self.state[t], out[i]) end
@@ -242,7 +244,7 @@ function layer:sample(input)
           -- inputs are input, c, h; Only input one h and c since each layer only has one layer
           self.inputs[l][t] = {self.LSTM_input[t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
           -- forward the network
-          local out = self.clones[t]:forward(self.inputs[t])
+          local out = self.clones[l][t]:forward(self.inputs[l][t])
           -- process the outputs
           if l ~= self.num_layers then self.interm_val[l][t] = out[self.num_state]  -- which is h
           else self.output[t] = out[self.num_state+1] end
@@ -269,7 +271,7 @@ function layer:updateGradInput(input, gradOutput)
       local dout = {} 
       for k = 2*l-1, 2*l do table.insert(dout, dstate[t][k]) end
       table.insert(dout, dInterm_val[l+1][t])
-      local dinputs_t = self.clones[t]:backward(self.inputs[l][t], dout)
+      local dinputs_t = self.clones[l][t]:backward(self.inputs[l][t], dout)
       dLSTM_input_l[t] = dinputs_t[1]
       dstate[t-1] = {}
       for k = 2, 3 do table.insert(dstate[t-1], dinputs_t[k]) end

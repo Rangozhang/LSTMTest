@@ -6,6 +6,7 @@ require 'lfs'
 require 'util.OneHot'
 require 'util.misc'
 require 'model.LSTM_layer'
+require 'model.LSTM_h_layer'
 local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
@@ -30,8 +31,6 @@ cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 cmd:option('-learning_rate',3e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
-cmd:option('-dropout',0.5,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-seq_length', 3,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
@@ -56,7 +55,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('train_'..opt.model..'.log')
+trainLogger = optim.Logger('./log/train_'..opt.model..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 
@@ -78,7 +77,8 @@ if opt.gpuid >= 0 then
 end
 
 -- create the data loader class
-local loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches)
+local input_seq_length = 9
+local loader = DataLoader.create(opt.data_dir, opt.batch_size, input_seq_length, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
 print('vocab size: ' .. vocab_size)
@@ -118,8 +118,8 @@ else
         if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true end
         protos.rnn = nn.LSTMLayer(rnn_opt)
     elseif opt.model == 'Hierarchical_lstm' then
-        rnn_opt.conv_size = 3
-        rnn_opt.stride = 3
+        rnn_opt.conv_size = {1, 3, 3}
+        rnn_opt.stride = {1, 3, 3}
         protos.rnn = nn.LSTMHierarchicalLayer(rnn_opt)
     end
     protos.criterion = nn.BCECriterion()
@@ -184,8 +184,9 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1)
-    local x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
-    for t = 1, opt.seq_length do
+    
+    local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
+    for t = 1, input_seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
     end
     x = x_input
@@ -256,8 +257,8 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 '..'train_'..opt.model..'.log.eps train_'..opt.model..'.png')
-    os.execute('rm train_'..opt.model..'.log.eps')
+    os.execute('convert -density 200 '..'./log/train_'..opt.model..'.log.eps ./log/train_'..opt.model..'.png')
+    os.execute('rm ./log/train_'..opt.model..'.log.eps')
 
     -- exponential learning rate decay
     if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
