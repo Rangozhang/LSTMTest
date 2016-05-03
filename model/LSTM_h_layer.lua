@@ -44,9 +44,11 @@ function layer:__init(opt)
   self.core = {}
   for t = 1, self.num_layers do
       local withDecoder = false
+      local input_size = self.rnn_size
+      if t == 1 then input_size = self.input_size end
       if t == self.num_layers then withDecoder = true end
       if self.is1vsA then 
-          self.core[t] = LSTM_mc.lstm(self.input_size, self.output_size, self.rnn_size, 1, dropout, self.group, withDecoder)
+          self.core[t] = LSTM_mc.lstm(input_size, self.output_size, self.rnn_size, 1, dropout, self.group, withDecoder)
           for layer_idx = 1, opt.num_layers do
             for group_idx = 1, self.group do
                 for _,node in ipairs(self.core.forwardnodes) do
@@ -58,7 +60,7 @@ function layer:__init(opt)
             end
           end
       else 
-          self.core[t] = LSTM.lstm(self.input_size, self.output_size, self.rnn_size, 1, dropout, withDecoder)
+          self.core[t] = LSTM.lstm(input_size, self.output_size, self.rnn_size, 1, dropout, withDecoder)
           for layer_idx = 1, opt.num_layers do
             for _,node in ipairs(self.core[t].forwardnodes) do
                 if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
@@ -182,9 +184,9 @@ function layer:updateOutput(input)
   self.interm_val= {[0] = seq}  -- after LSTM
   for l = 1, self.num_layers do
       self.inputs[l] = {}
-      self.LSTM_input[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size)
+      self.LSTM_input[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size):cuda()
 
-      if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size) end
+      if l ~= self.num_layers then self.interm_val[l] = torch.zeros(self.unroll_len[l], batch_size, self.rnn_size):cuda() end
       
       -- Subsampling
       -- WARNING: this is using subsampling instead of subsamplingClones[]
@@ -198,12 +200,16 @@ function layer:updateOutput(input)
           -- inputs are input, c, h; Only input one h and c since each layer only has one layer
           self.inputs[l][t] = {self.LSTM_input[l][t], self.state[t-1][(l-1)*2+1], self.state[t-1][l*2]}
           -- forward the network
+          print(l)
+          print(t)
+          print(self.inputs[l][t])
+          io.read()
           local out = self.clones[l][t]:forward(self.inputs[l][t])
           -- process the outputs
-          print(self.interm_val[l][t]:size())
-          print(out[#out]:size())
+          -- print(self.interm_val[l][t]:size())
+          print(out)
           self.interm_val[l][t]:copy(out[#out])
-          io.read()
+          -- io.read()
           --if l ~= self.num_layers then self.interm_val[l][t] = out[#out]  -- which is h
           --else self.output[t] = out[self.num_state+1] end
           if self.state[t] == nil then self.state[t] = {} end
