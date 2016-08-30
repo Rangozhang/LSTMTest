@@ -152,11 +152,14 @@ for i = 1, n_data do
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
     end
+    -- --[[
     --print(tmp_str)
     --io.read()
-    --print(final_pred:sum())
-    --io.read()
-    --print(res_y)
+    print(final_pred)
+    print(final_pred:sum())
+    print(y)
+    io.read()
+    --]]
     total = total + 1
     k_ = 0
     increasing_ind = torch.Tensor(opt.n_class):apply(function(increasing_ind)
