@@ -3,10 +3,6 @@ package.path = "../?.lua;" .. package.path
 local LSTM = require 'model.LSTM'
 local LSTM_mc = require 'model.LSTM_mc'
 
--------------------------------------------------------------------------------
--- Language Model core
--------------------------------------------------------------------------------
-
 local layer, parent = torch.class('nn.LSTMHierarchicalLayer', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)

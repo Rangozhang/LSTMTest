@@ -25,7 +25,7 @@ cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-data_dir','data/test_')
 cmd:option('-batch_size',128)
-cmd:option('-seq_length', 3)
+cmd:option('-seq_length', 9)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
 cmd:option('-overlap', 0)
@@ -47,7 +47,7 @@ protos = checkpoint.protos
 
 if opt.gpuid >= 0 then
     for k,v in pairs(protos) do 
-        print(torch.type(v))
+        -- print(torch.type(v))
         v:cuda() 
     end
 end
@@ -148,8 +148,6 @@ for i = 1, n_data do
         gnuplot.plotflush()
     end
     final_pred = final_pred/x:size(1)
-    --print(final_pred)
-    --io.read()
     tmp_str = "Total:\t"
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
@@ -176,6 +174,7 @@ for i = 1, n_data do
         print(y)
         print(final_pred)
         print(res_rank)
+        io.read()
         --]]
         n_data_for_each_class[y] = n_data_for_each_class[y] + 1
         if y == res_y then

@@ -3,10 +3,6 @@ package.path = "../?.lua;" .. package.path
 local LSTM = require 'model.LSTM'
 local LSTM_mc = require 'model.LSTM_mc'
 
--------------------------------------------------------------------------------
--- Language Model core
--------------------------------------------------------------------------------
-
 local layer, parent = torch.class('nn.LSTMLayer', 'nn.Module')
 function layer:__init(opt)
   parent.__init(self)
@@ -44,7 +40,7 @@ function layer:__init(opt)
       end
   end
   self:_createInitState(1) -- will be lazily resized later during forward passes
-  end
+end
 
 function layer:_createInitState(batch_size)
   -- contruct the hiden state, has to be all zeros
@@ -77,35 +73,32 @@ end
 
 function layer:parameters()
   -- we only have two internal modules, return their params
-  local p1,g1 = self.core:parameters()
+  local p1, g1 = self.core:parameters()
 
   local params = {}
-  for k,v in pairs(p1) do table.insert(params, v) end
+  for k, v in pairs(p1) do table.insert(params, v) end
   
   local grad_params = {}
-  for k,v in pairs(g1) do table.insert(grad_params, v) end
-
-  -- todo: invalidate self.clones if params were requested?
-  -- what if someone outside of us decided to call getParameters() or something?
-  -- (that would destroy our parameter sharing because clones 2...end would point to old memory)
+  for k, v in pairs(g1) do table.insert(grad_params, v) end
 
   return params, grad_params
 end
 
 function layer:training()
-  if self.clones == nil then self:createClones() end -- create these lazily if needed
+  -- create these lazily if needed
+  if self.clones == nil then self:createClones() end
   for k,v in pairs(self.clones) do v:training() end
 end
 
 function layer:evaluate()
-  if self.clones == nil then self:createClones() end -- create these lazily if needed
+  if self.clones == nil then self:createClones() end
   for k,v in pairs(self.clones) do v:evaluate() end
 end
 
 function layer:updateOutput(input)
   local seq = input -- seq_length * batch_size * input_size
   if self.clones == nil then self:createClones() end
-    -- lazily create clones on first forward pass
+  -- lazily create clones on first forward pass
 
   assert(seq:size(1) == self.seq_length)
   assert(seq:size(3) == self.input_size)
@@ -116,33 +109,10 @@ function layer:updateOutput(input)
 
   self.state = {[0] = self.init_state}
   self.inputs = {}
-  for t=1,self.seq_length do
+  for t=1, self.seq_length do
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}
       -- forward the network
       local out = self.clones[t]:forward(self.inputs[t])
-      -- process the outputs
-      self.output[t] = out[self.num_state+1] -- last element is the output vector
-      self.state[t] = {} -- the rest is state
-      for i=1,self.num_state do table.insert(self.state[t], out[i]) end
-  end
-
-  return self.output
-end
-
-function layer:sample(input)
-  local seq = input --input_seq_length * batch_size * input_size
-  local batch_size = seq:size(2)
-  local input_seq_length = seq:size(1)
-  self.output:resize(input_seq_length, batch_size, self.output_size)
-  
-  self:_createInitState(batch_size)
-
-  self.state = {[0] = self.init_state}
-  self.inputs = {}
-  for t=1, input_seq_length do
-      self.inputs[t] = {seq[t],unpack(self.state[t-1])}
-      -- forward the network
-      local out = self.clones[1]:forward(self.inputs[t])
       -- process the outputs
       self.output[t] = out[self.num_state+1] -- last element is the output vector
       self.state[t] = {} -- the rest is state
@@ -170,4 +140,27 @@ function layer:updateGradInput(input, gradOutput)
 
   self.gradInput = dinputs
   return self.gradInput
+end
+
+function layer:sample(input)
+  local seq = input --input_seq_length * batch_size * input_size
+  local batch_size = seq:size(2)
+  local input_seq_length = seq:size(1)
+  self.output:resize(input_seq_length, batch_size, self.output_size)
+  
+  self:_createInitState(batch_size)
+
+  self.state = {[0] = self.init_state}
+  self.inputs = {}
+  for t=1, input_seq_length do
+    self.inputs[t] = {seq[t],unpack(self.state[t-1])}
+    -- forward the network
+    local out = self.clones[1]:forward(self.inputs[t])
+    -- process the outputs
+    self.output[t] = out[self.num_state+1] -- last element is the output vector
+    self.state[t] = {} -- the rest is state
+    for i=1,self.num_state do table.insert(self.state[t], out[i]) end
+  end
+
+  return self.output
 end

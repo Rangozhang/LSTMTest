@@ -28,10 +28,10 @@ cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',3e-3,'learning rate')
-cmd:option('-learning_rate_decay',0.1,'learning rate decay')
+cmd:option('-learning_rate',1e-2,'learning rate')
+cmd:option('-learning_rate_decay',0.5,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-seq_length', 9,'number of timesteps to unroll for')
+cmd:option('-seq_length', 25,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
@@ -42,7 +42,7 @@ cmd:option('-init_from', '', 'initialize network parameters from checkpoint at t
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every', 2 ,'every how many epochs should we evaluate on validation data?')
+cmd:option('-eval_val_every', 1 ,'every how many epochs should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -51,6 +51,7 @@ cmd:text()
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
+
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
@@ -58,7 +59,6 @@ local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 trainLogger = optim.Logger('./log/train_'..opt.model..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
-
 if opt.gpuid >= 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
@@ -66,7 +66,7 @@ if opt.gpuid >= 0 then
     if not ok2 then print('package cutorch not found!') end
     if ok and ok2 then
         print('using CUDA on GPU ' .. opt.gpuid .. '...')
-        cutorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
+        cutorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed!
         cutorch.manualSeed(opt.seed)
     else
         print('If cutorch and cunn are installed, your CUDA toolkit may be improperly configured.')
@@ -77,10 +77,11 @@ if opt.gpuid >= 0 then
 end
 
 -- create the data loader class
-local input_seq_length = 9
+-- TODO: set input_seq_length more wisely by checking mode type
+local input_seq_length = opt.seq_length
 local loader = DataLoader.create(opt.data_dir, opt.batch_size, input_seq_length, split_sizes, opt.n_class, opt.nbatches)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
-local vocab = loader.vocab_mapping
+-- local vocab = loader.vocab_mapping -- what's vocab used for?
 print('vocab size: ' .. vocab_size)
 -- make sure output directory exists
 if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
@@ -135,7 +136,7 @@ params, grad_params = protos.rnn:getParameters()
 
 -- initialization
 if do_random_init then
-    params:uniform(-0.08, 0.08) -- small uniform numbers  -- just uniform sampling
+    params:uniform(-0.08, 0.08) -- small uniform numbers, just uniform sampling
 end
 
 -- evaluate the loss over an entire split
@@ -146,11 +147,13 @@ function eval_split(split_index, max_batches)
 
     loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
-    local rnn_state = {[0] = init_state}
+    local rnn_state = {[0] = init_state} -- TODO: Check where init_state comes from
     
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(split_index)
+        -- convert to one hot vector
+        -- TODO: add noise
         local x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
         for t = 1, opt.seq_length do
             x_input[t] = OneHot(vocab_size):forward(x[{{}, t}])
@@ -183,8 +186,12 @@ function feval(x)
     grad_params:zero()
 
     ------------------ get minibatch -------------------
-    local x, y = loader:next_batch(1)
+    local x, y = loader:next_batch(1) -- 1 -> trianing
+    -- print(x)
+    -- print(y)
+    -- io.read()
     
+    -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
     for t = 1, input_seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
@@ -226,6 +233,9 @@ function feval(x)
     --print(dpredictions)
     --io.read()
     local dimg = protos.rnn:backward(x, dpredictions)
+    -- grad_params:div(opt.seq_length)
+    -- clip gradient element-wise
+    grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     return loss, grad_params
 end
 
@@ -249,10 +259,8 @@ for i = 1, iterations do
     local _, loss = optim.rmsprop(feval, params, optim_state)
     local time = timer:time().real
 
-    local train_loss = loss[1] -- the loss is inside a list, pop it
-
     trainLogger:add{
-        ['Loss'] = train_loss
+        ['Loss'] = loss[1]
     }
     trainLogger:style{'-'}
     trainLogger.showPlot = false
@@ -261,7 +269,7 @@ for i = 1, iterations do
     os.execute('rm ./log/train_'..opt.model..'.log.eps')
 
     -- exponential learning rate decay
-    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
+    if is_new_epoch and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
         local decay_factor = opt.learning_rate_decay
         optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
         print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
@@ -273,6 +281,7 @@ for i = 1, iterations do
         local val_loss = eval_split(2) -- 2 = validation
 
         local savefile = string.format('%s/%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.model, epoch, val_loss)
+        print('Validating: '..epoch.."'s epoch loss = "..val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
@@ -281,21 +290,21 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %d), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
+        print(string.format("%d/%d (epoch %d) loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, loss[1], grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
     end
    
     if i % 10 == 0 then collectgarbage() end
 
     -- handle early stopping if things are going really bad
+    -- loss = NaN
     if loss[1] ~= loss[1] then
         print('loss is NaN.  This usually indicates a bug.  Please check the issues page for existing issues, or create a new issue, if none exist.  Ideally, please state: your operating system, 32-bit/64-bit, your blas version, cpu/cuda/cl?')
         break -- halt
     end
+    -- loss exploding
     if loss0 == nil then loss0 = loss[1] end
     if loss[1] > loss0 * 3 then
         print('loss is exploding, aborting.')
         break -- halt
     end
 end
-
-

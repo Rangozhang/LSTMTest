@@ -1,5 +1,4 @@
 require 'util.OneHot'
--- Modified from https://github.com/oxford-cs-ml-2015/practical6
 -- the modification included support for train/val/test splits
 
 local DataLoader = {}
@@ -67,10 +66,13 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
         test_file = 'test.txt'
     end
 
+    print(test_file)
+
     local test_input_file = path.join(data_dir, test_file)
     local test_tensor_file = path.join(data_dir, 'test_data.t7')
 
     -- fetch file attributes to determine if we need to rerun preprocessing
+    -- TRUE in order to generate new test data no matter test file exists or not
     local test_run_prepro = true
     if not ((path.exists(vocab_file) and path.exists(test_tensor_file))) then
         -- prepro files do not exist, generate them
@@ -137,7 +139,6 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
                     ind_batch[j] = math.ceil(torch.uniform()*n_data)
                 end
             end
-            --tmp[ind_batch[j]] = tmp[ind_batch[j]] + 1
 
             batch_data[{j, {}}]:copy(data[ind_batch[j]]:sub(strt_batch[j], strt_batch[j]+seq_length-1))
             strt_batch[j] = strt_batch[j] + seq_length
@@ -195,7 +196,7 @@ function DataLoader:next_batch(split_index)
         -- perform a check here to make sure the user isn't screwing something up
         local split_names = {'train', 'val', 'test'}
         print('ERROR. Code requested a batch for split ' .. split_names[split_index] .. ', but this split has no data.')
-        os.exit() -- crash violently
+        os.exit()
     end
     -- split_index is integer: 1 = train, 2 = val, 3 = test
     self.batch_ix[split_index] = self.batch_ix[split_index] + 1

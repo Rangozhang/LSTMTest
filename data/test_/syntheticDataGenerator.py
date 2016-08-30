@@ -17,5 +17,5 @@ for line in f:
             for z in xrange(repeated_num):
                 data_line += each
             data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
-        data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
+        data_line += ''.join(random.sample(string.uppercase, random.randint(0,4)))
         f2.write(tokens[0]+' '+data_line+'\n')

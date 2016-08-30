@@ -22,9 +22,12 @@ for line in f:
                 repeated_num = random.randint(1, 5)
                 for w in xrange(repeated_num):
                     data_line += each
-                data_line += ''.join(random.sample(string.uppercase, random.randint(6,8)))
-            data_line += ''.join(random.sample(string.uppercase, random.randint(20, 26)))
-            data_line += each + ''.join(random.sample(string.uppercase, random.randint(0,3)))
+                #data_line += ''.join(random.sample(string.uppercase, random.randint(6,8)))
+                data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
+            #data_line += ''.join(random.sample(string.uppercase, random.randint(20, 26)))
+            #data_line += each + ''.join(random.sample(string.uppercase, random.randint(0,3)))
+            data_line += ''.join(random.sample(string.uppercase, random.randint(0,4)))
+            #print(data_line)
             if data_line not in train_list:
                flag = True
         f2.write(tokens[0]+' '+data_line+'\n')
