@@ -31,7 +31,7 @@ cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 cmd:option('-learning_rate',1e-2,'learning rate')
 cmd:option('-learning_rate_decay',0.5,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-seq_length', 25,'number of timesteps to unroll for')
+cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
 cmd:option('-max_epochs', 5,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
@@ -290,7 +290,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %d) loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, loss[1], grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
+        print(string.format("%d/%d epoch %d loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, loss[1], grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
     end
    
     if i % 10 == 0 then collectgarbage() end

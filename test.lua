@@ -24,7 +24,7 @@ cmd:argument('-model','model checkpoint to use for sampling')
 cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-data_dir','data/test_')
-cmd:option('-batch_size',128)
+cmd:option('-batch_size',128) -- not useful for now
 cmd:option('-seq_length', 9)
 cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
