@@ -1,0 +1,5 @@
+require 'nn'
+require 'nngraph'
+require 'MapTable'
+LSTM = require 'LSTM'
+LSTM_1vsA = require 'LSTM_1vsA_'

@@ -115,8 +115,9 @@ else
     rnn_opt.num_layers = opt.num_layers
     rnn_opt.dropout = opt.dropout
     rnn_opt.seq_length = opt.seq_length
+    if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true
+      else rnn_opt.is1vsA = false end
     if opt.model == 'lstm' or opt.model == '1vsA_lstm' then
-        if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true end
         protos.rnn = nn.LSTMLayer(rnn_opt)
     elseif opt.model == 'Hierarchical_lstm' then
         rnn_opt.conv_size = {1, 3, 3}

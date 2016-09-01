@@ -1,16 +1,17 @@
-
 local LSTM = {}
 function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
   dropout = dropout or 0 
   withDecoder = withDecoder or false
 
   -- there will be 2*n+1 inputs
+  -- --[[
   local inputs = {}
   table.insert(inputs, nn.Identity()()) -- x
   for L = 1,n do
     table.insert(inputs, nn.Identity()()) -- prev_c[L]
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
   end
+  --]]
 
   local x, input_size_L
   local outputs = {}
@@ -67,4 +68,3 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
 end
 
 return LSTM
-
