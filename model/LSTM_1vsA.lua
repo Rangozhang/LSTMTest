@@ -31,7 +31,7 @@ function LSTM_1vsA.lstm(input_size, output_size, rnn_size, n, group, dropout, wi
 
   for i = 1, group do
     local output = LSTM.lstm(input_size, 1, rnn_size, n,
-      dropout, withDecoder)(group_inputs[i])
+      dropout, withDecoder)(group_inputs[i]):annotate{name='lstm_layer'}
     for t = 1, 2*n+1 do
       if outputs_tbl[t] == nil then outputs_tbl[t] = {} end
       local selected = nn.SelectTable(t)(output)

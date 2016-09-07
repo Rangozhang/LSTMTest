@@ -25,7 +25,7 @@ function layer:__init(opt)
   end
   for layer_idx = 1, opt.num_layers do
     for _,node in ipairs(self.core.forwardnodes) do
-        if node.data.annotations.name == "i2h_" .. layer_idx then--group_idx .. '_' .. layer_idx then
+        if node.data.annotations.name == "i2h_" .. layer_idx then --group_idx .. '_' .. layer_idx then
              print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
              node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
         end

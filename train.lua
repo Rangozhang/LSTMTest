@@ -22,7 +22,7 @@ cmd:text('Options')
 -- data tinyshakespeare
 cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 10, 'size of LSTM internal state') -- to train 1vsA model
+cmd:option('-rnn_size', 60, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
@@ -34,14 +34,15 @@ cmd:option('-learning_rate_decay',0.5,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-weight_decay',0.95,'weight decay')
 cmd:option('-dropout',0.5,'drop out, 0 = no dropout')
-cmd:option('-seq_length', 10,'number of timesteps to unroll for')
+cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 2,'number of full passes through the training data')
+cmd:option('-max_epochs', 4,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
             -- test_frac will be computed as (1 - train_frac - val_frac)
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
+cmd:option('-finetune', false, 'finetune a 1vsA model based on AvsA model')
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',5,'how many steps/minibatches between printing out the loss')
@@ -91,7 +92,7 @@ if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
 
 -- define the model: prototypes for one timestep, then clone them in time
 local do_random_init = true
-if string.len(opt.init_from) > 0 then
+if string.len(opt.init_from) > 0 and not opt.finetune then
     print('loading an LSTM from checkpoint ' .. opt.init_from)
     local checkpoint = torch.load(opt.init_from)
     protos = checkpoint.protos
@@ -141,6 +142,32 @@ params, grad_params = protos.rnn:getParameters()
 -- initialization
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers, just uniform sampling
+end
+
+-- init a 1vsA model based on pre-trained AvsA model
+if opt.model == '1vsA_lstm'
+    and opt.finetune and string.len(opt.init_from) > 0 then
+    print('loading an LSTM from checkpoint ' .. opt.init_from)
+    local checkpoint = torch.load(opt.init_from)
+    local weights = {}
+    local bias = {}
+    for layer_idx = 1, opt.num_layers do
+        for _,node in ipairs(checkpoint.protos.forwardnodes) do
+            if node.data.annotations.name == "i2h_" .. layer_idx or
+                node.data.annotations.name == "h2h_" .. layer_idx then
+                print('Dump params from ' .. node.data.annotations.name)
+                weights[node.data.annotations.name] = node.data.module.weight
+                bias[node.data.annotations.name] = node.data.module.bias
+            end
+        end
+    end
+    for layer_idx = 1, opt.num_layers do
+        for _,node in ipairs(protos.rnn.forwardnodes) do
+            
+        end
+    end
+
+    do_random_init = false
 end
 
 -- evaluate the loss over an entire split
