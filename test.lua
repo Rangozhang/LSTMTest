@@ -119,7 +119,7 @@ for i = 1, n_data do
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
-        -- print(tmp_str)
+        print(tmp_str)
         -- Take average
         final_pred = final_pred + prediction
         --[[
@@ -155,8 +155,8 @@ for i = 1, n_data do
     -- --[[
     --print(tmp_str)
     --io.read()
-    print(final_pred)
     print(final_pred:sum())
+    print(final_pred)
     print(y)
     io.read()
     --]]

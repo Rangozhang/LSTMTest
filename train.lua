@@ -22,18 +22,20 @@ cmd:text('Options')
 -- data tinyshakespeare
 cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 60, 'size of LSTM internal state')
+cmd:option('-rnn_size', 60, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
+cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-2,'learning rate')
-cmd:option('-learning_rate_decay',1.5,'learning rate decay')
+cmd:option('-learning_rate_decay',0.1,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-weight_decay',0.95,'weight decay')
 cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 5,'number of full passes through the training data')
+cmd:option('-max_epochs', 6,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -56,7 +58,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('./log/train_'..opt.model..'.log')
+trainLogger = optim.Logger('./log/train_'..opt.model..'_'..opt.gpuid..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 then
@@ -169,6 +171,7 @@ function eval_split(split_index, max_batches)
         protos.rnn:training()
         local predictions = protos.rnn:forward(x)
         for t = 1, opt.seq_length do
+            -- if opt.is_balanced then protos.criterion = nn.BCECriterion(y*(opt.n_class-2)+1); end
             loss = loss + protos.criterion:forward(predictions[t], y)
         end
 
@@ -224,8 +227,12 @@ function feval(x)
     --io.read()
     local dpredictions = predictions:clone():fill(0)
     for t = 1, opt.seq_length do
+        --if opt.model == '1vsA_lstm' and opt.is_balanced then protos.criterion = nn.BCECriterion(y*8+1) end
         loss = loss + protos.criterion:forward(predictions[t], y)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
+        if opt.model == '1vsA_lstm' and opt.is_balanced then
+            dpredictions[t]:cmul(y*2+0.5)
+        end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
     -- the loss is the average loss across time steps
@@ -243,7 +250,8 @@ end
 -- start optimization here
 
 print("start training:")
-local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
+local optim_state = { learningRate = opt.learning_rate,
+                      alpha = opt.weight_decay }
 
 local iterations = opt.max_epochs * loader.ntrain
 local loss0 = nil
@@ -266,8 +274,8 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 '..'./log/train_'..opt.model..'.log.eps ./log/train_'..opt.model..'.png')
-    os.execute('rm ./log/train_'..opt.model..'.log.eps')
+    os.execute('convert -density 200 '..'./log/train_'..opt.model..'_'..opt.gpuid..'.log.eps ./log/train_'..opt.model..'_'..opt.gpuid..'.png')
+    os.execute('rm ./log/train_'..opt.model..'_'..opt.gpuid..'.log.eps')
 
     -- exponential learning rate decay
     if is_new_epoch and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
