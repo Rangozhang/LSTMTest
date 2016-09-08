@@ -10,8 +10,8 @@ require 'model.LSTM_h_layer'
 local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
-local GRU = require 'model.GRU'
-local RNN = require 'model.RNN'
+--local GRU = require 'model.GRU'
+--local RNN = require 'model.RNN'
 
 -- there is a better one called llap
 cmd = torch.CmdLine()
