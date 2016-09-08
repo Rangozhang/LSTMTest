@@ -60,7 +60,7 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('./log/train_'..opt.model..'_'..opt.gpuid..'.log')
+trainLogger = optim.Logger('./log/train-'..opt.model..'-'..opt.gpuid..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 then
@@ -310,8 +310,8 @@ for i = 1, iterations do
     trainLogger:style{'-'}
     trainLogger.showPlot = false
     trainLogger:plot()
-    os.execute('convert -density 200 '..'./log/train_'..opt.model..'_'..opt.gpuid..'.log.eps ./log/train_'..opt.model..'_'..opt.gpuid..'.png')
-    os.execute('rm ./log/train_'..opt.model..'_'..opt.gpuid..'.log.eps')
+    os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')
+    os.execute('rm ./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps')
 
     -- exponential learning rate decay
     if is_new_epoch and opt.learning_rate_decay < 1 and epoch % opt.learning_rate_decay_every == 0 then
