@@ -16,7 +16,6 @@ local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 
-local printing = true
 
 -- there is a better one called llap
 cmd = torch.CmdLine()
@@ -32,12 +31,14 @@ cmd:option('-n_class', 10)
 cmd:option('-nbatches', 500)
 cmd:option('-overlap', 0)
 cmd:option('-draw', 0)
+cmd:option('-printing', false)
 cmd:text()
 
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
+local printing = opt.printing
 opt.overlap = (opt.overlap == 1)
 opt.draw = (opt.draw == 1)
 
