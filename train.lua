@@ -22,7 +22,7 @@ cmd:text('Options')
 -- data tinyshakespeare
 cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 60, 'size of LSTM internal state') -- to train 1vsA model
+cmd:option('-rnn_size', 320, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
@@ -152,7 +152,7 @@ if opt.model == '1vsA_lstm'
     local weights = {}
     local bias = {}
     for layer_idx = 1, opt.num_layers do
-        for _,node in ipairs(checkpoint.protos.forwardnodes) do
+        for _,node in ipairs(checkpoint.protos.rnn.core.forwardnodes) do
             if node.data.annotations.name == "i2h_" .. layer_idx or
                 node.data.annotations.name == "h2h_" .. layer_idx then
                 print('Dump params from ' .. node.data.annotations.name)
@@ -161,12 +161,12 @@ if opt.model == '1vsA_lstm'
             end
         end
     end
-    for _,node in ipairs(protos.rnn.forwardnodes) do
+    for _,node in ipairs(protos.rnn.core.forwardnodes) do
         if node.data.annotations.name == 'lstm_layer' then
             for _,lstm_node in ipairs(node.data.module.forwardnodes) do
                 for layer_idx = 1, opt.num_layers do
-                    if lstm_node.data.annotations.name == "i2h_"..layer_idx
-                        or lstm_node.data.annotations.name == "h2h_"..layer_idx then
+                    if lstm_node.data.annotations.name == "i2h_"..layer_idx or
+                        lstm_node.data.annotations.name == "h2h_"..layer_idx then
                         print('Copy params from ' .. lstm_node.data.annotations.name)
                         lstm_node.data.module.weight = weights[lstm_node.data.annotations.name]:clone();
                         lstm_node.data.module.bias = bias[lstm_node.data.annotations.name]:clone();
@@ -175,7 +175,6 @@ if opt.model == '1vsA_lstm'
             end
         end
     end
-
     do_random_init = false
 end
 

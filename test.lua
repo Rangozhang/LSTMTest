@@ -16,6 +16,8 @@ local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 
+local printing = true
+
 -- there is a better one called llap
 cmd = torch.CmdLine()
 cmd:text()
@@ -119,7 +121,7 @@ for i = 1, n_data do
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
-        print(tmp_str)
+        if printing then print(tmp_str) end
         -- Take average
         final_pred = final_pred + prediction
         --[[
@@ -155,10 +157,12 @@ for i = 1, n_data do
     -- --[[
     --print(tmp_str)
     --io.read()
-    print(final_pred:sum())
-    print(final_pred)
-    print(y)
-    io.read()
+    if printing then
+        print(final_pred:sum())
+        print(final_pred)
+        print(y)
+        io.read()
+    end
     --]]
     total = total + 1
     k_ = 0
