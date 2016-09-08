@@ -161,9 +161,18 @@ if opt.model == '1vsA_lstm'
             end
         end
     end
-    for layer_idx = 1, opt.num_layers do
-        for _,node in ipairs(protos.rnn.forwardnodes) do
-            
+    for _,node in ipairs(protos.rnn.forwardnodes) do
+        if node.data.annotations.name == 'lstm_layer' then
+            for _,lstm_node in ipairs(node.data.module.forwardnodes) do
+                for layer_idx = 1, opt.num_layers do
+                    if lstm_node.data.annotations.name == "i2h_"..layer_idx
+                        or lstm_node.data.annotations.name == "h2h_"..layer_idx then
+                        print('Copy params from ' .. lstm_node.data.annotations.name)
+                        lstm_node.data.module.weight = weights[lstm_node.data.annotations.name]:clone();
+                        lstm_node.data.module.bias = bias[lstm_node.data.annotations.name]:clone();
+                    end
+                end
+            end
         end
     end
 
