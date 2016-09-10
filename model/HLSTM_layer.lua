@@ -22,9 +22,9 @@ function layer:__init(opt)
       assert(self.rnn_size % self.group == 0, "rnn_size and group are invalid")
       self.core = LSTM_1vsA.lstm(self.input_size, self.output_size,
         self.rnn_size/self.group, self.num_layers, self.group, self.dropout, true)
-      -- hiber gate: all vs. all mode
+      -- hiber gate: all vs. all mode => hidden_state concated and output 10
       -- TODO: embeded size is given by rnn_size, try something else
-      self.hiber_gate = hiber_gate(self.rnn_size/self.group,
+      self.hiber_gate = hiber_gate(self.num_layers*2*self.rnn_size,
         self.input_size, self.rnn_size/self.group, self.output_size)
   --[[
   else 
@@ -176,7 +176,9 @@ end
 -- gradOutput is a table {lstm_gradOutput, hiber_gradOutput}
 function layer:updateGradInput(input, gradOutput)
   local dinputs = input[1]:clone():zero() -- grad on input images
+  -- lstm_gradOutput: seq_len x batch_size x output_size
   local lstm_gradOutput = gradOutput[1]
+  -- hiber_gradOutput: seq_len x batch_size x output_size
   local hiber_gradOutput = gradOutput[2]
 
   -- LSTM framework backward
@@ -194,12 +196,14 @@ function layer:updateGradInput(input, gradOutput)
   end
 
   -- Hiber gate backward
+  -- put flatten the first dim
   local concat_state = {}
   for i = 1, self.seq_length do
     concat_state[i] = nn.JoinTable(2):forward(self.state[t-1])
   end
   concat_state = nn.JoinTable(1):forward(concat_state)
-  self.hiber_gate:backward({concat_state, seq:view(-1, self.input_size)})
+  self.hiber_gate:backward({concat_state, seq:view(-1, self.input_size)},
+                            hiber_gradOutput:view(-1, self.output_size))
 
   self.gradInput = dinputs
   return self.gradInput
