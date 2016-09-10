@@ -1,7 +1,7 @@
 require 'nn'
 package.path = "../?.lua;" .. package.path
 local LSTM = require 'model.LSTM'
-local LSTM_mc = require 'model.LSTM_mc'
+local LSTM_mc = require 'model.LSTM_1vsA'
 
 local layer, parent = torch.class('nn.LSTMHierarchicalLayer', 'nn.Module')
 function layer:__init(opt)
