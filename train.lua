@@ -25,6 +25,7 @@ cmd:option('-data_dir','data/test_','data directory. Should contain the file inp
 cmd:option('-rnn_size', 320, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
+-- cmd:option('-hiber_gate', false, 'weather use hiber gate or not')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
@@ -186,7 +187,8 @@ function eval_split(split_index, max_batches)
 
     loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
-    local rnn_state = {[0] = init_state} -- TODO: Check where init_state comes from
+    -- local rnn_state = {[0] = init_state}
+    -- TODO: Check where init_state comes from
     
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
@@ -227,6 +229,7 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1) -- 1 -> trianing
+    -- if opt. local hiber_y = y:clone():fill(0)
     -- print(x)
     -- print(y)
     -- io.read()
@@ -254,7 +257,6 @@ function feval(x)
     --]]
 
     ------------------- forward pass -------------------
-    local predictions = {}           -- softmax outputs
     local loss = 0
     protos.rnn:training()
     local predictions = protos.rnn:forward(x)
@@ -267,6 +269,7 @@ function feval(x)
         loss = loss + protos.criterion:forward(predictions[t], y)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
         if opt.model == '1vsA_lstm' and opt.is_balanced then
+            --TODO: find out a more delegate way
             dpredictions[t]:cmul(y*5+1)
         end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
@@ -284,7 +287,6 @@ function feval(x)
 end
 
 -- start optimization here
-
 print("start training:")
 local optim_state = { learningRate = opt.learning_rate,
                       alpha = opt.weight_decay }
@@ -307,7 +309,7 @@ for i = 1, iterations do
     trainLogger:add{
         ['Loss'] = loss[1]
     }
-    trainLogger:style{'-'}
+    trainLogger:style{['Loss']= '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')

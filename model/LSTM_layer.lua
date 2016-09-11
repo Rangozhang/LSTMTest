@@ -100,8 +100,6 @@ function layer:updateOutput(input)
   self:_createInitState(batch_size)
 
   self.state = {[0] = self.init_state}
-  print(self.init_state)
-  io.read()
   self.inputs = {}
   for t=1, self.seq_length do
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}
