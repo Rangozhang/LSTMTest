@@ -237,6 +237,7 @@ function feval(x)
         for j = 1, input_seq_length do
             hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
             local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
+            
             for i = 1, indices:size() do
                 hiber_y[{{j},{indices[i]},{}}]:fill(0)
                 hiber_y[{{j},{indices[i]},{-1}}] = 1
