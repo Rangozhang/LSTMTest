@@ -25,7 +25,7 @@ cmd:option('-data_dir','data/test_','data directory. Should contain the file inp
 cmd:option('-rnn_size', 320, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
--- cmd:option('-hiber_gate', false, 'weather use hiber gate or not')
+cmd:option('-hiber_gate', false, 'weather use hiber gate or not')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
@@ -229,10 +229,23 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1) -- 1 -> trianing
-    -- if opt. local hiber_y = y:clone():fill(0)
-    -- print(x)
-    -- print(y)
-    -- io.read()
+    local hiber_y
+    -- hiber_y: seq_length x batch_size x output_size+1
+    if opt.hiber_gate then
+        hiber_y = torch.zeros(input_seq_length, y:size(1), y:size(2)+1)
+        local invalid_x = x:le(26)
+        for j = 1, input_seq_length do
+            hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
+            local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
+            for i = 1, indices:size() do
+                hiber_y[{{j},{indices[i]},{}}]:fill(0)
+                hiber_y[{{j},{indices[i]},{-1}}] = 1
+            end
+        end 
+    end
+    print(x)
+    print(y)
+    io.read()
     
     -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)

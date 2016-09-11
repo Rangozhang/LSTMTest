@@ -25,7 +25,7 @@ function layer:__init(opt)
       -- hiber gate: all vs. all mode => hidden_state concated and output 10
       -- TODO: embeded size is given by rnn_size, try something else
       self.hiber_gate = hiber_gate(self.num_layers*2*self.rnn_size,
-        self.input_size, self.rnn_size/self.group, self.output_size)
+        self.input_size, self.rnn_size/self.group, self.output_size+1)
   --[[
   else 
       self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size,
@@ -139,7 +139,8 @@ function layer:updateOutput(input)
 
   -- Decide whether to use hiber_gate generated hiber_state or hiber_state_groundtruth
   self.usingHGResult = (torch.bernoulli(sigma) == 1)
-  self.hiber_state:resize(self.seq_length, batch_size, self.output_size)
+  -- self.output_size + 1 means n_class + noise
+  self.hiber_state:resize(self.seq_length, batch_size, self.output_size+1)
   
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
@@ -158,6 +159,8 @@ function layer:updateOutput(input)
       assert(sampled_indices:nDimension() == 1 and sampled_indices:size(1) == batch_size)
       hiber_state_final:fill(0):scatter(2, sampled_indices, 1)
       assert(hiber_state_final:sum() == batch_size)
+      -- needs to get rid of the last column, which is the noise entry
+      hiber_state_final = hiber_state_final[{{},{},{1,-2}}]
 
       -- LSTM framework forward
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}
