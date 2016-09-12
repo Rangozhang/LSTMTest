@@ -147,8 +147,9 @@ function layer:updateOutput(input)
   self.inputs = {}
   for t=1, self.seq_length do
       -- hiber gate forward
-      self.hiber_state[t] = self.hiber_gate:forward
-                                {nn.JoinTable(2):forward(self.state[t-1]), seq[t]}
+      -- add exponential since the output of hiber_gate is logSoftmax()
+      self.hiber_state[t] = torch.exp(self.hiber_gate:forward
+                                {nn.JoinTable(2):forward(self.state[t-1]), seq[t]})
       -- choose the correct hiber_state
       local hiber_state_final = self.usingHGResult and self.hiber_state[t]
                                                   or  hiber_state_groundtruth[t]
@@ -178,7 +179,7 @@ end
 
 -- gradOutput is a table {lstm_gradOutput, hiber_gradOutput}
 function layer:updateGradInput(input, gradOutput)
-  local dinputs = input[1]:clone():zero() -- grad on input images
+  local dinputs = input:clone():zero() -- grad on input images
   -- lstm_gradOutput: seq_len x batch_size x output_size
   local lstm_gradOutput = gradOutput[1]
   -- hiber_gradOutput: seq_len x batch_size x output_size

@@ -81,6 +81,8 @@ if opt.gpuid >= 0 then
     end
 end
 
+local sigma = {0.1, 0.3, 0.5, 0.7, 0.9}
+
 -- create the data loader class
 -- TODO: set input_seq_length more wisely by checking mode type
 local input_seq_length = opt.seq_length
@@ -122,7 +124,11 @@ else
     rnn_opt.seq_length = opt.seq_length
     if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true
       else rnn_opt.is1vsA = false end
-    if opt.model == 'lstm' or opt.model == '1vsA_lstm' then
+    -- now hiber gate is only available for 1vsA_lstm
+    if opt.hiber_gate then
+        rnn_oipt.is1vsA = true
+        protos.rnn = nn.HLSTMLayer(rnn_opt)
+    elseif opt.model == 'lstm' or opt.model == '1vsA_lstm' then
         protos.rnn = nn.LSTMLayer(rnn_opt)
     elseif opt.model == 'Hierarchical_lstm' then
         rnn_opt.conv_size = {1, 3, 3}
@@ -130,6 +136,7 @@ else
         protos.rnn = nn.LSTMHierarchicalLayer(rnn_opt)
     end
     protos.criterion = nn.BCECriterion()
+    if opt.hiber_gate then protos.hiber_gate_criterion = nn.ClassNLLCriterion() end
 end
 
 -- ship the model to the GPU if desired
@@ -237,16 +244,17 @@ function feval(x)
         for j = 1, input_seq_length do
             hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
             local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
-            
-            for i = 1, indices:size() do
+            print(indices:size()[1])
+            for i = 1, indices:size()[1] do
                 hiber_y[{{j},{indices[i]},{}}]:fill(0)
                 hiber_y[{{j},{indices[i]},{-1}}] = 1
             end
         end 
     end
-    print(x)
-    print(y)
-    io.read()
+    -- print(x)
+    -- print(y)
+    -- print(hiber_y)
+    -- io.read()
     
     -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
@@ -272,16 +280,31 @@ function feval(x)
 
     ------------------- forward pass -------------------
     local loss = 0
+    local hiber_loss = 0
     protos.rnn:training()
-    local predictions = protos.rnn:forward(x)
+    local proto_outputs
+    if opt.hiber_gate then
+        proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
+    else 
+        proto_outputs = protos.rnn:forward(x)
+    end
+    local predictions = proto_outputs[1]
+    local hiber_predictions = proto_outputs[2]
+    local dhiber_predictions = hiber_predictions:clone():fill(0)
     --print(predictions)
+    --print(hiber_predictions)
     --print(y)
     --io.read()
     local dpredictions = predictions:clone():fill(0)
+    if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions(3)-1) end
     for t = 1, opt.seq_length do
         --if opt.model == '1vsA_lstm' and opt.is_balanced then protos.criterion = nn.BCECriterion(y*8+1) end
         loss = loss + protos.criterion:forward(predictions[t], y)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
+        if opt.hiber_gate then
+            hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
+            dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(hiber_predictions[t], hiber_y[t]))
+        end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
             dpredictions[t]:cmul(y*5+1)
@@ -290,10 +313,16 @@ function feval(x)
     end
     -- the loss is the average loss across time steps
     loss = loss / opt.seq_length
+    hiber_loss = hiber_loss / opt.seq_length
     ------------------ backward pass -------------------
     --print(dpredictions)
     --io.read()
-    local dimg = protos.rnn:backward(x, dpredictions)
+    local dimg
+    if opt.hiber_gate then
+        dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions})
+    else
+        dimg = protos.rnn:backward(x, dpredictions)
+    end
     -- grad_params:div(opt.seq_length)
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
