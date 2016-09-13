@@ -82,7 +82,7 @@ if opt.gpuid >= 0 then
     end
 end
 
-local sigma = {0.1, 0.3, 0.5, 0.7, 0.9}
+local sigma = {0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0, 1.0}
 local epoch = 1
 
 -- create the data loader class
@@ -251,7 +251,7 @@ function eval_split(split_index, max_batches)
             loss = loss + protos.criterion:forward(predictions[t], y)
             if opt.hiber_gate then
                 local hiber_y_indices = hiber_y[t]:max(2):squeeze()
-                hiber_loss = hiber_loss + protos.hiber_criterion:forward(hiber_predictions[t], hiber_y_indices)
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y_indices)
             end
         end
 
@@ -338,6 +338,9 @@ function feval(x)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
         if opt.hiber_gate then
             local hiber_y_indices = hiber_y[t]:max(2):squeeze()
+            print(hiber_predictions[t])
+            print(hiber_y[t])
+            io.read()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
                                             hiber_predictions[t], hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
@@ -388,10 +391,10 @@ for i = 1, iterations do
     local time = timer:time().real
 
     trainLogger:add{
-        ['Loss'] = lstm_loss,
-        ['Hiber_loss'] = hiber_loss,
+        ['LSTM-Loss'] = lstm_loss,
+        ['Hiber-loss'] = hiber_loss,
     }
-    trainLogger:style{['LSTM_Loss']= '-', ['Hiber_loss'] = '-'}
+    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')
