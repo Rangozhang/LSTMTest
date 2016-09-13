@@ -250,7 +250,8 @@ function eval_split(split_index, max_batches)
             -- if opt.is_balanced then protos.criterion = nn.BCECriterion(y*(opt.n_class-2)+1); end
             loss = loss + protos.criterion:forward(predictions[t], y)
             if opt.hiber_gate then
-                local hiber_y_indices = hiber_y[t]:max(2):squeeze()
+                local _, hiber_y_indices = hiber_y[t]:max(2)
+                hiber_y_indices = hiber_y_indices:squeeze():cuda()
                 hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y_indices)
             end
         end
@@ -337,10 +338,8 @@ function feval(x)
         loss = loss + protos.criterion:forward(predictions[t], y)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
         if opt.hiber_gate then
-            local hiber_y_indices = hiber_y[t]:max(2):squeeze()
-            print(hiber_predictions[t])
-            print(hiber_y[t])
-            io.read()
+            local _, hiber_y_indices = hiber_y[t]:max(2)
+            hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
                                             hiber_predictions[t], hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(

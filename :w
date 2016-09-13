@@ -8,7 +8,6 @@ require 'cunn'
 require 'xlua'
 require 'gnuplot'
 require 'model.LSTM_layer'
-require 'model.HLSTM_layer'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -109,7 +108,12 @@ for i = 1, n_data do
     draw2 = torch.Tensor(seq_length):fill(0)
 
     local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
-    local predictions = protos.rnn:sample(x_input)
+    local predictions
+    if opt.hiber_gate then
+        predictions = protos.rnn:forward({x_input, 1})[1]
+    else
+        predictions = protos.rnn:forward(x_input)
+    end
     for t = 1, seq_length do
         prediction = predictions[t]
         draw1[t] = prediction[{1, y[1]}]

@@ -238,3 +238,53 @@ function layer:sample(input)
   return self.output
 end
 --]]
+
+-- input is a table input
+-- output is a table output
+function layer:sample(input)
+  local seq = input -- input_seq_length * batch_size * input_size
+  local batch_size = seq:size(2)
+  local input_seq_length = seq:size(1)
+  self.output:resize(input_seq_length, batch_size, self.output_size)
+
+  if self.clones == nil then self:createClones() end
+  self:_createInitState(batch_size)
+  assert(seq:size(3) == self.input_size)
+
+  -- self.output_size + 1 means n_class + noise
+  self.hiber_state = self.output.new()
+  self.hiber_state:resize(self.seq_length, batch_size, self.output_size+1)
+  
+  -- Hiber LSTM update simultaneously
+  self.state = {[0] = self.init_state}
+  self.inputs = {}
+  for t=1, self.seq_length do
+      -- hiber gate forward
+      self.hiber_state[t] = self.hiber_gate:forward
+                                {nn.JoinTable(2):forward(self.state[t-1]):cuda(), seq[t]}
+      local hiber_state_final = torch.exp(self.hiber_state[t]):clone()
+      assert(hiber_state_final:size(1) == batch_size)
+      -- hiber_state binarization using sampling
+      -- sampled_indices = batch_size x 1
+      local sampled_indices = torch.multinomial(torch.exp(self.hiber_state[t]), 1)
+      assert(sampled_indices:nDimension() == 2 and sampled_indices:size(1) == batch_size)
+      hiber_state_final:fill(0):scatter(2, sampled_indices:type('torch.CudaLongTensor'), 1)
+      assert(hiber_state_final:sum() == batch_size)
+      -- needs to get rid of the last column, which is the noise entry
+      hiber_state_final = hiber_state_final[{{},{1,-2}}]
+
+      -- LSTM framework forward
+      self.inputs[t] = {seq[t],unpack(self.state[t-1])}
+      local out = self.clones[t]:forward(self.inputs[t])
+      -- process the outputs
+      self.output[t] = out[self.num_state+1] -- last element is the output vector
+      self.state[t] = {} -- the rest is state
+      for i=1,self.num_state do table.insert(self.state[t], out[i]) end
+      -- update the state according to hidden state
+      self:hidden_state_update(self.state[t], self.state[t-1], hiber_state_final)
+  end
+
+  return self.output
+end
+
+
