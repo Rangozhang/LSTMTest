@@ -78,7 +78,7 @@ function layer:hidden_state_update(cur_state, pre_state, hiber_state)
         enlarged_hiber_state[i] = hiber_state[{{},{i}}]
                                     :repeatTensor(1, rnn_size_each)
     end
-    enlarged_hiber_state = torch.cat(enlarged_hiber_state, 2)
+    enlarged_hiber_state = torch.cat(enlarged_hiber_state, 2):cuda()
     for i = 1, self.num_layers*2 do
         cur_state[i] = torch.add(torch.cmul(cur_state[i],
                                             enlarged_hiber_state),
@@ -133,13 +133,14 @@ function layer:updateOutput(input)
 
   assert(seq:size(1) == self.seq_length)
   assert(seq:size(3) == self.input_size)
-  assert(hiber_state_groundtruth == nil and sigma == 1)
+  if hiber_state_groundtruth == nil then assert(sigma == 1) end
   self.output:resize(self.seq_length, batch_size, self.output_size)
   self:_createInitState(batch_size)
 
   -- Decide whether to use hiber_gate generated hiber_state or hiber_state_groundtruth
   self.usingHGResult = (torch.bernoulli(sigma) == 1)
   -- self.output_size + 1 means n_class + noise
+  self.hiber_state = self.output.new()
   self.hiber_state:resize(self.seq_length, batch_size, self.output_size+1)
   
   -- Hiber LSTM update simultaneously
@@ -148,20 +149,20 @@ function layer:updateOutput(input)
   for t=1, self.seq_length do
       -- hiber gate forward
       -- add exponential since the output of hiber_gate is logSoftmax()
-      self.hiber_state[t] = torch.exp(self.hiber_gate:forward
-                                {nn.JoinTable(2):forward(self.state[t-1]), seq[t]})
+      self.hiber_state[t] = self.hiber_gate:forward
+                                {nn.JoinTable(2):forward(self.state[t-1]):cuda(), seq[t]}
       -- choose the correct hiber_state
-      local hiber_state_final = self.usingHGResult and self.hiber_state[t]
-                                                  or  hiber_state_groundtruth[t]
+      local hiber_state_final = self.usingHGResult and torch.exp(self.hiber_state[t]):clone()
+                                                  or  hiber_state_groundtruth[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling
       -- sampled_indices = batch_size x 1
-      local sampled_indices = torch.multinomial(self.hiber_state[t], 1)
-      assert(sampled_indices:nDimension() == 1 and sampled_indices:size(1) == batch_size)
-      hiber_state_final:fill(0):scatter(2, sampled_indices, 1)
+      local sampled_indices = torch.multinomial(torch.exp(self.hiber_state[t]), 1)
+      assert(sampled_indices:nDimension() == 2 and sampled_indices:size(1) == batch_size)
+      hiber_state_final:fill(0):scatter(2, sampled_indices:type('torch.CudaLongTensor'), 1)
       assert(hiber_state_final:sum() == batch_size)
       -- needs to get rid of the last column, which is the noise entry
-      hiber_state_final = hiber_state_final[{{},{},{1,-2}}]
+      hiber_state_final = hiber_state_final[{{},{1,-2}}]
 
       -- LSTM framework forward
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}
@@ -182,7 +183,7 @@ function layer:updateGradInput(input, gradOutput)
   local dinputs = input:clone():zero() -- grad on input images
   -- lstm_gradOutput: seq_len x batch_size x output_size
   local lstm_gradOutput = gradOutput[1]
-  -- hiber_gradOutput: seq_len x batch_size x output_size
+  -- hiber_gradOutput: seq_len x batch_size x output_size+1
   local hiber_gradOutput = gradOutput[2]
 
   -- LSTM framework backward
@@ -203,11 +204,11 @@ function layer:updateGradInput(input, gradOutput)
   -- put flatten the first dim
   local concat_state = {}
   for i = 1, self.seq_length do
-    concat_state[i] = nn.JoinTable(2):forward(self.state[t-1])
+    concat_state[i] = nn.JoinTable(2):forward(self.state[i-1]):cuda()
   end
-  concat_state = nn.JoinTable(1):forward(concat_state)
-  self.hiber_gate:backward({concat_state, seq:view(-1, self.input_size)},
-                            hiber_gradOutput:view(-1, self.output_size))
+  concat_state = nn.JoinTable(1):forward(concat_state):cuda()
+  self.hiber_gate:backward({concat_state, input:view(-1, self.input_size)},
+                            hiber_gradOutput:view(-1, self.output_size+1))
 
   self.gradInput = dinputs
   return self.gradInput

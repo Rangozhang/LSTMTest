@@ -11,6 +11,6 @@ function hiber_gate(concated_rnn_size, input_size, embeded_size, output_size)
   local elementwise_product = nn.CAddTable()({embeded_h, embeded_input})
   local pre_output = nn.Linear(embeded_size,output_size)(elementwise_product)
   local pre_output2 = nn.Linear(output_size,output_size)(pre_output)
-  local output = nn.SoftMax()(pre_output2)
+  local output = nn.LogSoftMax()(pre_output2)
   return nn.gModule({h, input}, {output})
 end

@@ -6,6 +6,7 @@ require 'lfs'
 require 'util.OneHot'
 require 'util.misc'
 require 'model.LSTM_layer'
+require 'model.HLSTM_layer'
 require 'model.LSTM_h_layer'
 local DataLoader = require 'util.DataLoader'
 local model_utils = require 'util.model_utils'
@@ -82,6 +83,7 @@ if opt.gpuid >= 0 then
 end
 
 local sigma = {0.1, 0.3, 0.5, 0.7, 0.9}
+local epoch = 1
 
 -- create the data loader class
 -- TODO: set input_seq_length more wisely by checking mode type
@@ -126,7 +128,7 @@ else
       else rnn_opt.is1vsA = false end
     -- now hiber gate is only available for 1vsA_lstm
     if opt.hiber_gate then
-        rnn_oipt.is1vsA = true
+        rnn_opt.is1vsA = true
         protos.rnn = nn.HLSTMLayer(rnn_opt)
     elseif opt.model == 'lstm' or opt.model == '1vsA_lstm' then
         protos.rnn = nn.LSTMLayer(rnn_opt)
@@ -194,12 +196,32 @@ function eval_split(split_index, max_batches)
 
     loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
+    local hiber_loss = 0
     -- local rnn_state = {[0] = init_state}
-    -- TODO: Check where init_state comes from
     
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(split_index)
+        local hiber_y
+        -- hiber_y: seq_length x batch_size x output_size+1
+        if opt.hiber_gate then
+            hiber_y = torch.zeros(input_seq_length, y:size(1), y:size(2)+1)
+            local invalid_x = x:le(26)
+            for j = 1, input_seq_length do
+                hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
+                local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
+                if indices:nDimension() > 0 then
+                    for i = 1, indices:size()[1] do
+                        hiber_y[{{j},{indices[i]},{}}]:fill(0)
+                        hiber_y[{{j},{indices[i]},{-1}}] = 1
+                    end
+                end
+            end 
+        end
+        if opt.gpuid >= 0 then
+            hiber_y = hiber_y:cuda()
+        end
+
         -- convert to one hot vector
         -- TODO: add noise
         local x_input = torch.zeros(opt.seq_length, opt.batch_size, vocab_size)
@@ -214,10 +236,23 @@ function eval_split(split_index, max_batches)
         end
 
         protos.rnn:training()
-        local predictions = protos.rnn:forward(x)
+        local proto_outputs
+        local predictions, hiber_predictions
+        if opt.hiber_gate then
+            proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
+            predictions = proto_outputs[1]
+            hiber_predictions = proto_outputs[2]
+        else
+            proto_outputs = protos.rnn:forward(x)
+            predictions = proto_outputs
+        end
         for t = 1, opt.seq_length do
             -- if opt.is_balanced then protos.criterion = nn.BCECriterion(y*(opt.n_class-2)+1); end
             loss = loss + protos.criterion:forward(predictions[t], y)
+            if opt.hiber_gate then
+                local hiber_y_indices = hiber_y[t]:max(2):squeeze()
+                hiber_loss = hiber_loss + protos.hiber_criterion:forward(hiber_predictions[t], hiber_y_indices)
+            end
         end
 
         --rnn_state[0] = rnn_state[#rnn_state] did we need this?
@@ -225,7 +260,8 @@ function eval_split(split_index, max_batches)
     end
 
     loss = loss / opt.seq_length / n
-    return loss
+    hiber_loss = hiber_loss / opt.seq_length / n
+    return {loss, hiber_loss}
 end
 
 function feval(x)
@@ -244,17 +280,17 @@ function feval(x)
         for j = 1, input_seq_length do
             hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
             local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
-            print(indices:size()[1])
-            for i = 1, indices:size()[1] do
-                hiber_y[{{j},{indices[i]},{}}]:fill(0)
-                hiber_y[{{j},{indices[i]},{-1}}] = 1
+            if indices:nDimension() > 0 then
+                for i = 1, indices:size()[1] do
+                    hiber_y[{{j},{indices[i]},{}}]:fill(0)
+                    hiber_y[{{j},{indices[i]},{-1}}] = 1
+                end
             end
         end 
     end
-    -- print(x)
-    -- print(y)
-    -- print(hiber_y)
-    -- io.read()
+    if opt.gpuid >= 0 then
+        hiber_y = hiber_y:cuda()
+    end
     
     -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
@@ -282,28 +318,30 @@ function feval(x)
     local loss = 0
     local hiber_loss = 0
     protos.rnn:training()
-    local proto_outputs
+    local proto_outputs, 
+          predictions,
+          hiber_predictions,
+          dhiber_predictions
     if opt.hiber_gate then
         proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
+        predictions = proto_outputs[1]
+        hiber_predictions = proto_outputs[2]
+        dhiber_predictions = hiber_predictions:clone():fill(0)
     else 
         proto_outputs = protos.rnn:forward(x)
+        predictions = proto_outputs
     end
-    local predictions = proto_outputs[1]
-    local hiber_predictions = proto_outputs[2]
-    local dhiber_predictions = hiber_predictions:clone():fill(0)
-    --print(predictions)
-    --print(hiber_predictions)
-    --print(y)
-    --io.read()
     local dpredictions = predictions:clone():fill(0)
-    if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions(3)-1) end
+    if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions:size(3)-1) end
     for t = 1, opt.seq_length do
-        --if opt.model == '1vsA_lstm' and opt.is_balanced then protos.criterion = nn.BCECriterion(y*8+1) end
         loss = loss + protos.criterion:forward(predictions[t], y)
         dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
         if opt.hiber_gate then
-            hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
-            dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(hiber_predictions[t], hiber_y[t]))
+            local hiber_y_indices = hiber_y[t]:max(2):squeeze()
+            hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
+                                            hiber_predictions[t], hiber_y_indices)
+            dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
+                                            hiber_predictions[t], hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
@@ -315,8 +353,6 @@ function feval(x)
     loss = loss / opt.seq_length
     hiber_loss = hiber_loss / opt.seq_length
     ------------------ backward pass -------------------
-    --print(dpredictions)
-    --io.read()
     local dimg
     if opt.hiber_gate then
         dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions})
@@ -326,7 +362,7 @@ function feval(x)
     -- grad_params:div(opt.seq_length)
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    return loss, grad_params
+    return {loss, hiber_loss}, grad_params
 end
 
 -- start optimization here
@@ -336,7 +372,7 @@ local optim_state = { learningRate = opt.learning_rate,
 
 local iterations = opt.max_epochs * loader.ntrain
 local loss0 = nil
-local epoch = 1
+local hiber_loss0 = nil
 for i = 1, iterations do
     local new_epoch = math.ceil(i / loader.ntrain)
     local is_new_epoch = false
@@ -347,12 +383,15 @@ for i = 1, iterations do
 
     local timer = torch.Timer()
     local _, loss = optim.rmsprop(feval, params, optim_state)
+    local lstm_loss = loss[1][1]
+    local hiber_loss = loss[1][2]
     local time = timer:time().real
 
     trainLogger:add{
-        ['Loss'] = loss[1]
+        ['Loss'] = lstm_loss,
+        ['Hiber_loss'] = hiber_loss,
     }
-    trainLogger:style{['Loss']= '-'}
+    trainLogger:style{['LSTM_Loss']= '-', ['Hiber_loss'] = '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')
@@ -368,10 +407,12 @@ for i = 1, iterations do
     -- every now and then or on last iteration
     if is_new_epoch and epoch % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
-        local val_loss = eval_split(2) -- 2 = validation
+        local val_losses = eval_split(2) -- 2 = validation
+        local val_loss = val_losses[1]
+        local val_hiber_loss = val_losses[2]
 
-        local savefile = string.format('%s/%s_epoch%d_%.2f.t7', opt.checkpoint_dir, opt.model, epoch, val_loss)
-        print('Validating: '..epoch.."'s epoch loss = "..val_loss)
+        local savefile = string.format('%s/%s_epoch%d_%.2f_%.2f.t7', opt.checkpoint_dir, opt.model, epoch, val_loss, val_hiber_loss)
+        print('Validating: '..epoch.."'s epoch loss = "..val_loss.." hiber_loss = "..val_hiber_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
@@ -380,7 +421,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d epoch %d loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, loss[1], grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
+        print(string.format("%d/%d epoch %d loss = %6.8f hiber_loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, lstm_loss, hiber_loss, grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
     end
    
     if i % 10 == 0 then collectgarbage() end
@@ -392,9 +433,14 @@ for i = 1, iterations do
         break -- halt
     end
     -- loss exploding
-    if loss0 == nil then loss0 = loss[1] end
-    if loss[1] > loss0 * 3 then
+    if loss0 == nil then loss0 = lstm_loss end
+    if lstm_loss > loss0 * 3 then
         print('loss is exploding, aborting.')
-        break -- halt
+        break
+    end
+    if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
+    if hiber_loss > hiber_loss0 * 3 then
+        print('loss is exploding, aborting.')
+        break
     end
 end
