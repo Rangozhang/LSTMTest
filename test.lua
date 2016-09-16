@@ -72,15 +72,42 @@ local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
 local first_two = 0.0
 
+local hiber_accuracy = 0.0
+local hiber_total = 0
+
 protos.rnn:evaluate()
 
 for i = 1, n_data do
     xlua.progress(i, n_data)
     local x, y = loader:next_test_data()
-    local seq_length = x:size(1)
+    x = x:reshape(1, x:size(1))
+    -- x: batch_size x seq_length
+
+    local seq_length = x:size(2)
+    local y_onehot = OneHot(opt.n_class):forward(y)
+    local hiber_y
+    -- hiber_y: seq_length x batch_size x output_size+1
+    if opt.hiber_gate then
+        hiber_y = torch.zeros(seq_length, y_onehot:size(1), y_onehot:size(2)+1)
+        local invalid_x = x:le(26)
+        for j = 1, seq_length do
+            hiber_y[{{j},{},{1,y_onehot:size(2)}}] = y_onehot:clone()
+            local indices = torch.range(1, y_onehot:size(1))[invalid_x[{{},{j}}]]
+            if indices:nDimension() > 0 then
+                for i = 1, indices:size()[1] do
+                    hiber_y[{{j},{indices[i]},{}}]:fill(0)
+                    hiber_y[{{j},{indices[i]},{-1}}] = 1
+                end
+            end
+        end 
+    end
+    if opt.gpuid >= 0 then
+        hiber_y = hiber_y:cuda()
+    end
+
     local x_input = torch.zeros(seq_length, 1 , vocab_size):cuda()
     for t = 1, seq_length do
-        x_input[t] = OneHot(vocab_size):forward(torch.Tensor{x[t]})
+        x_input[t] = OneHot(vocab_size):forward(x[{{}, t}])
     end
 
     --print("-----------Data----------")
@@ -102,14 +129,24 @@ for i = 1, n_data do
     print(y)
     --]]
     if opt.gpuid >= 0 then
-        x = x:float():cuda()
+        x_input = x_input:float():cuda()
     end
     
     draw1 = torch.Tensor(seq_length):fill(0)
     draw2 = torch.Tensor(seq_length):fill(0)
 
     local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
-    local predictions = protos.rnn:sample(x_input)
+    local predictions, hiber_predictions
+    if opt.hiber_gate then 
+        local rnn_res = protos.rnn:sample(x_input)
+        predictions = rnn_res[1]
+        hiber_predictions = rnn_res[2]
+    else
+        predictions = protos.rnn:sample(x_input)
+    end
+    print(predictions:size())
+    print(hiber_predictions:size())
+    io.read()
     for t = 1, seq_length do
         prediction = predictions[t]
         draw1[t] = prediction[{1, y[1]}]

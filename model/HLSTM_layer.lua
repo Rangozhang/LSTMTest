@@ -242,6 +242,8 @@ end
 -- input is a table input
 -- output is a table output
 function layer:sample(input)
+  print(input)
+  io.read() --> input_size is wrong
   local seq = input -- input_seq_length * batch_size * input_size
   local batch_size = seq:size(2)
   local input_seq_length = seq:size(1)
@@ -258,8 +260,13 @@ function layer:sample(input)
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
   self.inputs = {}
-  for t=1, self.seq_length do
+  for t=1, input_seq_length do
       -- hiber gate forward
+      print("======")
+      print(t)
+      print(seq[t]:size())
+      print(nn.JoinTable(2):forward(self.state[t-1]):cuda():size())
+      io.read()
       self.hiber_state[t] = self.hiber_gate:forward
                                 {nn.JoinTable(2):forward(self.state[t-1]):cuda(), seq[t]}
       local hiber_state_final = torch.exp(self.hiber_state[t]):clone()
@@ -284,7 +291,7 @@ function layer:sample(input)
       self:hidden_state_update(self.state[t], self.state[t-1], hiber_state_final)
   end
 
-  return self.output
+  return {self.output, torch.exp(self.hiber_state)}
 end
 
 
