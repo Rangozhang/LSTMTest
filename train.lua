@@ -62,7 +62,6 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
 
-trainLogger = optim.Logger('./log/train-'..opt.model..'-'..opt.gpuid..'.log')
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 then
@@ -141,6 +140,8 @@ else
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then protos.hiber_gate_criterion = nn.ClassNLLCriterion() end
 end
+
+trainLogger = optim.Logger('./log/train-'..opt.model..'-'..opt.gpuid..'.log')
 
 -- ship the model to the GPU if desired
 if opt.gpuid >= 0 then
