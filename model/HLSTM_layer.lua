@@ -78,7 +78,7 @@ function layer:hidden_state_update(cur_state, pre_state, hiber_state)
         enlarged_hiber_state[i] = hiber_state[{{},{i}}]
                                     :repeatTensor(1, rnn_size_each)
     end
-    enlarged_hiber_state = torch.cat(enlarged_hiber_state, 2):cuda()
+    enlarged_hiber_state = torch.cat(enlarged_hiber_state, 2)
     for i = 1, self.num_layers*2 do
         cur_state[i] = torch.add(torch.cmul(cur_state[i],
                                             enlarged_hiber_state),
@@ -150,7 +150,7 @@ function layer:updateOutput(input)
       -- hiber gate forward
       -- add exponential since the output of hiber_gate is logSoftmax()
       self.hiber_state[t] = self.hiber_gate:forward
-                                {nn.JoinTable(2):forward(self.state[t-1]):cuda(), seq[t]}
+                                {nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
       -- choose the correct hiber_state
       local hiber_state_final = self.usingHGResult and torch.exp(self.hiber_state[t]):clone()
                                                   or  hiber_state_groundtruth[t]:clone()
@@ -204,9 +204,9 @@ function layer:updateGradInput(input, gradOutput)
   -- put flatten the first dim
   local concat_state = {}
   for i = 1, self.seq_length do
-    concat_state[i] = nn.JoinTable(2):forward(self.state[i-1]):cuda()
+    concat_state[i] = nn.JoinTable(2):cuda():forward(self.state[i-1])
   end
-  concat_state = nn.JoinTable(1):forward(concat_state):cuda()
+  concat_state = nn.JoinTable(1):cuda():forward(concat_state)
   self.hiber_gate:backward({concat_state, input:view(-1, self.input_size)},
                             hiber_gradOutput:view(-1, self.output_size+1))
 
@@ -242,8 +242,6 @@ end
 -- input is a table input
 -- output is a table output
 function layer:sample(input)
-  print(input)
-  io.read() --> input_size is wrong
   local seq = input -- input_seq_length * batch_size * input_size
   local batch_size = seq:size(2)
   local input_seq_length = seq:size(1)
@@ -262,13 +260,8 @@ function layer:sample(input)
   self.inputs = {}
   for t=1, input_seq_length do
       -- hiber gate forward
-      print("======")
-      print(t)
-      print(seq[t]:size())
-      print(nn.JoinTable(2):forward(self.state[t-1]):cuda():size())
-      io.read()
       self.hiber_state[t] = self.hiber_gate:forward
-                                {nn.JoinTable(2):forward(self.state[t-1]):cuda(), seq[t]}
+                                {nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
       local hiber_state_final = torch.exp(self.hiber_state[t]):clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling

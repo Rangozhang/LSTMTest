@@ -128,6 +128,7 @@ else
       else rnn_opt.is1vsA = false end
     -- now hiber gate is only available for 1vsA_lstm
     if opt.hiber_gate then
+        opt.model = '1vsA_lstm'
         rnn_opt.is1vsA = true
         protos.rnn = nn.HLSTMLayer(rnn_opt)
     elseif opt.model == 'lstm' or opt.model == '1vsA_lstm' then
@@ -218,9 +219,6 @@ function eval_split(split_index, max_batches)
                 end
             end 
         end
-        if opt.gpuid >= 0 then
-            hiber_y = hiber_y:cuda()
-        end
 
         -- convert to one hot vector
         -- TODO: add noise
@@ -233,6 +231,7 @@ function eval_split(split_index, max_batches)
         if opt.gpuid >= 0 then
             x = x:float():cuda()
             y = y:float():cuda()
+            hiber_y = hiber_y:float():cuda()
         end
 
         protos.rnn:training()
