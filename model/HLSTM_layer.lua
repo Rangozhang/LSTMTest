@@ -253,7 +253,7 @@ function layer:sample(input)
 
   -- self.output_size + 1 means n_class + noise
   self.hiber_state = self.output.new()
-  self.hiber_state:resize(self.seq_length, batch_size, self.output_size+1)
+  self.hiber_state:resize(input_seq_length, batch_size, self.output_size+1)
   
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
@@ -275,7 +275,7 @@ function layer:sample(input)
 
       -- LSTM framework forward
       self.inputs[t] = {seq[t],unpack(self.state[t-1])}
-      local out = self.clones[t]:forward(self.inputs[t])
+      local out = self.clones[1]:forward(self.inputs[t])
       -- process the outputs
       self.output[t] = out[self.num_state+1] -- last element is the output vector
       self.state[t] = {} -- the rest is state

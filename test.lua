@@ -144,8 +144,8 @@ for i = 1, n_data do
     else
         predictions = protos.rnn:sample(x_input)
     end
-    print(predictions:size())
-    print(hiber_predictions:size())
+    print(hiber_predictions[1])
+    print(hiber_y[1])
     io.read()
     for t = 1, seq_length do
         prediction = predictions[t]
@@ -153,7 +153,7 @@ for i = 1, n_data do
         if opt.overlap then
             draw2[t] = prediction[{1, y[2]}]
         end
-        tmp_str = vocab[x[t]] .. "\t"
+        tmp_str = vocab[x:squeeze()[t]] .. "\t"
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
@@ -178,9 +178,9 @@ for i = 1, n_data do
         end
         x_str = 'set xtics ("'
         for mm = 1, x:size(1)-1 do
-            x_str = x_str .. tostring(vocab[x[mm]]) .. '" ' .. tostring(mm) .. ', "'
+            x_str = x_str .. tostring(vocab[x:squeeze()[mm]]) .. '" ' .. tostring(mm) .. ', "'
         end
-        x_str = x_str .. tostring(vocab[x[x:size(1)]]) .. '" ' .. tostring(x:size(1)) .. ') '
+        x_str = x_str .. tostring(vocab[x:squeeze()[x:size(2)]]) .. '" ' .. tostring(x:size(1)) .. ') '
         gnuplot.raw(x_str)
         gnuplot.axis{'','',0,1}
         gnuplot.plotflush()
