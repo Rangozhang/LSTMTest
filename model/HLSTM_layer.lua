@@ -203,19 +203,19 @@ function layer:updateOutput(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hiber state
-      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-                                               hiber_state_final, self.rnn_size)
-      if t == 1 then
-          -- self.output[t] = self:hidden_state_update(self.output[t],
-          --                              torch.zeros(batch_size, self.output_size):float():cuda(),
-          --                              hiber_state_final,
-          --                              self.output_size)
-      else
-          self.output[t] = self:hidden_state_update(self.output[t],
-                                       self.output[t-1],
-                                       hiber_state_final,
-                                       self.output_size)
-      end
+      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+      --                                          hiber_state_final, self.rnn_size)
+      -- if t == 1 then
+      --     -- self.output[t] = self:hidden_state_update(self.output[t],
+      --     --                              torch.zeros(batch_size, self.output_size):float():cuda(),
+      --     --                              hiber_state_final,
+      --     --                              self.output_size)
+      -- else
+      --     self.output[t] = self:hidden_state_update(self.output[t],
+      --                                  self.output[t-1],
+      --                                  hiber_state_final,
+      --                                  self.output_size)
+      -- end
   end
   return {self.output, self.hiber_state}
 end
@@ -323,19 +323,19 @@ function layer:sample(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hidden state
-      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-                                               hiber_state_final, self.rnn_size)
-      if t == 1 then
-          -- self.output[t] = self:hidden_state_update(self.output[t],
-          --                              torch.zeros(batch_size, self.output_size):float():cuda(),
-          --                              hiber_state_final,
-          --                              self.output_size)
-      else
-          self.output[t] = self:hidden_state_update(self.output[t],
-                                       self.output[t-1],
-                                       hiber_state_final,
-                                       self.output_size)
-      end
+      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+      --                                          hiber_state_final, self.rnn_size)
+      -- if t == 1 then
+      --     -- self.output[t] = self:hidden_state_update(self.output[t],
+      --     --                              torch.zeros(batch_size, self.output_size):float():cuda(),
+      --     --                              hiber_state_final,
+      --     --                              self.output_size)
+      -- else
+      --     self.output[t] = self:hidden_state_update(self.output[t],
+      --                                  self.output[t-1],
+      --                                  hiber_state_final,
+      --                                  self.output_size)
+      -- end
 
   end
 
