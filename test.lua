@@ -73,7 +73,7 @@ local accuracy_1_ = 0.0
 local first_two = 0.0
 
 local hiber_accuracy = 0.0
-local hiber_total = 0
+local hiber_total = 0.0
 
 protos.rnn:evaluate()
 
@@ -135,7 +135,7 @@ for i = 1, n_data do
     draw1 = torch.Tensor(seq_length):fill(0)
     draw2 = torch.Tensor(seq_length):fill(0)
 
-    local final_pred = torch.Tensor(opt.n_class):fill(0):cuda()
+    local final_pred = torch.CudaTensor(opt.n_class):fill(0)
     local predictions, hiber_predictions
     if opt.hiber_gate then 
         local rnn_res = protos.rnn:sample(x_input)
@@ -144,9 +144,6 @@ for i = 1, n_data do
     else
         predictions = protos.rnn:sample(x_input)
     end
-    print(hiber_predictions[1])
-    print(hiber_y[1])
-    io.read()
     for t = 1, seq_length do
         prediction = predictions[t]
         draw1[t] = prediction[{1, y[1]}]
@@ -166,6 +163,13 @@ for i = 1, n_data do
             final_pred[w] = math.max(final_pred[w], prediction[{1, w}])
         end
         --]]
+        
+        local _, pred_ind = hiber_predictions[t]:max(2)
+        local _, gt_ind = hiber_y[t]:max(2)
+        if pred_ind:squeeze() == gt_ind:squeeze() then
+            hiber_accuracy = hiber_accuracy + 1
+        end
+        hiber_total = hiber_total + 1
     end
     if opt.draw then
         x_axis = torch.range(1, x:size(1))
@@ -259,13 +263,18 @@ if not opt.overlap then
 
     print("Accuracy:")
     print(correct/total)
+
+    print("Accuracy of hiber_gate")
+    print(hiber_accuracy / hiber_total)
 else 
     print("Accuracy of exact correct:")
     print(accuracy_2 / total)
     print("Accuracy of only one is correct or two are correct")
     print(accuracy_1 / total)
     print("Accracy as long as the result consists of the two classes")
-    print(accuracy_1_ / total)
+    print(accuracy_2_ / total)
     print("Accuracy as first highest two are correct")
     print(first_two / total)
+    print("Accuracy of hiber_gate")
+    print(hiber_accuracy / hiber_total)
 end

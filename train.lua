@@ -81,7 +81,8 @@ if opt.gpuid >= 0 then
     end
 end
 
-local sigma = {0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0, 1.0}
+--local sigma = {0.1, 0.5, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
+local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -107,9 +108,11 @@ if string.len(opt.init_from) > 0 and not opt.finetune then
             vocab_compatible = false
         end
     end
-    assert(vocab_compatible, 'error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
+    assert(vocab_compatible, 'error, the character vocabulary for this dataset' ..
+        'and the one in the saved checkpoint are not the same. This is trouble.')
     -- overwrite model settings based on checkpoint to ensure compatibility
-    print('overwriting rnn_size=' .. checkpoint.opt.rnn_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
+    print('overwriting rnn_size=' .. checkpoint.opt.rnn_size .. ', num_layers='
+            .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
     opt.rnn_size = checkpoint.opt.rnn_size
     opt.num_layers = checkpoint.opt.num_layers
     do_random_init = false
@@ -138,7 +141,11 @@ else
         protos.rnn = nn.LSTMHierarchicalLayer(rnn_opt)
     end
     protos.criterion = nn.BCECriterion()
-    if opt.hiber_gate then protos.hiber_gate_criterion = nn.ClassNLLCriterion() end
+    if opt.hiber_gate then 
+        local weights = torch.zeros(opt.n_class+1):fill(10)
+        weights[opt.n_class+1] = 1
+        protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+    end
 end
 
 trainLogger = optim.Logger('./log/train-'..opt.model..'-'..opt.gpuid..'.log')
@@ -437,12 +444,12 @@ for i = 1, iterations do
     -- loss exploding
     if loss0 == nil then loss0 = lstm_loss end
     if lstm_loss > loss0 * 3 then
-        print('loss is exploding, aborting.')
+        print('lstm loss is exploding, aborting.')
         break
     end
     if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
     if hiber_loss > hiber_loss0 * 3 then
-        print('loss is exploding, aborting.')
+        print('hiber loss is exploding, aborting.')
         break
     end
 end

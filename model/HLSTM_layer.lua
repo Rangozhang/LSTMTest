@@ -68,8 +68,36 @@ function layer:createClones()
   end
 end
 
+function layer:hidden_state_update(cur_state, pre_state, hiber_state, state_size)
+    -- cur_state: {batch_size x rnn_size} is a list w/ self.num_layers*2 + 1 elements
+        -- while the last element is output
+        -- cur_state: batch_size x rnn_size + batch_size x output_size
+    -- hiber_state: batch_size x group
+    -- rnn_size = group x rnn_size_each
+    local keep_mask = hiber_state:max(2)
+    local enlarged_hiber_state = keep_mask:repeatTensor(1, state_size)
+    if type(cur_state) == 'table' then
+        assert(#cur_state == #pre_state)
+        assert(cur_state[1]:size(1) == enlarged_hiber_state:size(1))
+        assert(cur_state[1]:size(2) == enlarged_hiber_state:size(2))
+        for i = 1, #cur_state do
+            cur_state[i] = torch.add(torch.cmul(cur_state[i],
+                                                enlarged_hiber_state),
+                                     torch.cmul(pre_state[i],
+                                                -enlarged_hiber_state+1))
+        end
+    else
+            cur_state = torch.add(torch.cmul(cur_state,
+                                                enlarged_hiber_state),
+                                             torch.cmul(pre_state,
+                                                -enlarged_hiber_state+1))
+    end
+    return cur_state
+end
+
+--[[
 function layer:hidden_state_update(cur_state, pre_state, hiber_state)
-    -- cur_state: batch_size x rnn_size
+    -- cur_state: {batch_size x rnn_size} is a list w/ self.num_layers*2 elements
     -- hiber_state: batch_size x group
     -- rnn_size = group x rnn_size_each
     local rnn_size_each = self.rnn_size/self.group
@@ -79,6 +107,8 @@ function layer:hidden_state_update(cur_state, pre_state, hiber_state)
                                     :repeatTensor(1, rnn_size_each)
     end
     enlarged_hiber_state = torch.cat(enlarged_hiber_state, 2)
+    print(enlarged_hiber_state)
+    io.read()
     for i = 1, self.num_layers*2 do
         cur_state[i] = torch.add(torch.cmul(cur_state[i],
                                             enlarged_hiber_state),
@@ -86,6 +116,7 @@ function layer:hidden_state_update(cur_state, pre_state, hiber_state)
                                             -enlarged_hiber_state+1))
     end
 end
+--]]
 
 function layer:getModulesList()
   return {self.core}
@@ -171,10 +202,21 @@ function layer:updateOutput(input)
       self.output[t] = out[self.num_state+1] -- last element is the output vector
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
-      -- update the state according to hidden state
-      self:hidden_state_update(self.state[t], self.state[t-1], hiber_state_final)
+      -- update the state according to hiber state
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, self.rnn_size)
+      if t == 1 then
+          -- self.output[t] = self:hidden_state_update(self.output[t],
+          --                              torch.zeros(batch_size, self.output_size):float():cuda(),
+          --                              hiber_state_final,
+          --                              self.output_size)
+      else
+          self.output[t] = self:hidden_state_update(self.output[t],
+                                       self.output[t-1],
+                                       hiber_state_final,
+                                       self.output_size)
+      end
   end
-
   return {self.output, self.hiber_state}
 end
 
@@ -281,10 +323,21 @@ function layer:sample(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hidden state
-      self:hidden_state_update(self.state[t], self.state[t-1], hiber_state_final)
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, self.rnn_size)
+      if t == 1 then
+          -- self.output[t] = self:hidden_state_update(self.output[t],
+          --                              torch.zeros(batch_size, self.output_size):float():cuda(),
+          --                              hiber_state_final,
+          --                              self.output_size)
+      else
+          self.output[t] = self:hidden_state_update(self.output[t],
+                                       self.output[t-1],
+                                       hiber_state_final,
+                                       self.output_size)
+      end
+
   end
 
   return {self.output, torch.exp(self.hiber_state)}
 end
-
-
