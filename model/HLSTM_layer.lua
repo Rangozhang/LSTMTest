@@ -17,6 +17,7 @@ function layer:__init(opt)
   self.seq_length = opt.seq_length
   self.group = self.output_size -- assign each group only one output: 1vsAll
   self.dropout = opt.dropout
+  self.no_update_value = opt.no_update_value
   if self.is1vsA then 
       -- rnn_size here means the size for each model
       assert(self.rnn_size % self.group == 0, "rnn_size and group are invalid")
@@ -203,19 +204,18 @@ function layer:updateOutput(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hiber state
-      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-      --                                          hiber_state_final, self.rnn_size)
-      -- if t == 1 then
-      --     -- self.output[t] = self:hidden_state_update(self.output[t],
-      --     --                              torch.zeros(batch_size, self.output_size):float():cuda(),
-      --     --                              hiber_state_final,
-      --     --                              self.output_size)
-      -- else
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, self.rnn_size)
+      -- if t ~= 1 then
       --     self.output[t] = self:hidden_state_update(self.output[t],
       --                                  self.output[t-1],
       --                                  hiber_state_final,
       --                                  self.output_size)
       -- end
+      self.output[t] = self:hidden_state_update(self.output[t],
+                                       self.output[t]:clone():fill(self.no_update_value),
+                                       hiber_state_final,
+                                       self.output_size)
   end
   return {self.output, self.hiber_state}
 end
@@ -256,35 +256,11 @@ function layer:updateGradInput(input, gradOutput)
   return self.gradInput
 end
 
---[[
-function layer:sample(input)
-  local seq = input --input_seq_length * batch_size * input_size
-  local batch_size = seq:size(2)
-  local input_seq_length = seq:size(1)
-  self.output:resize(input_seq_length, batch_size, self.output_size)
-  
-  self:_createInitState(batch_size)
-
-  self.state = {[0] = self.init_state}
-  self.inputs = {}
-  for t=1, input_seq_length do
-    self.inputs[t] = {seq[t],unpack(self.state[t-1])}
-    -- forward the network
-    local out = self.clones[1]:forward(self.inputs[t])
-    -- process the outputs
-    self.output[t] = out[self.num_state+1] -- last element is the output vector
-    self.state[t] = {} -- the rest is state
-    for i=1,self.num_state do table.insert(self.state[t], out[i]) end
-  end
-
-  return self.output
-end
---]]
-
 -- input is a table input
 -- output is a table output
 function layer:sample(input)
-  local seq = input -- input_seq_length * batch_size * input_size
+  local seq = input[1] -- input_seq_length * batch_size * input_size
+  local hiber_gt = input[2] -- input_seq_length * batch_size * output_size
   local batch_size = seq:size(2)
   local input_seq_length = seq:size(1)
   self.output:resize(input_seq_length, batch_size, self.output_size)
@@ -304,7 +280,8 @@ function layer:sample(input)
       -- hiber gate forward
       self.hiber_state[t] = self.hiber_gate:forward
                                 {nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
-      local hiber_state_final = torch.exp(self.hiber_state[t]):clone()
+      local hiber_state_final = hiber_gt == nil and torch.exp(self.hiber_state[t]):clone()
+                                or hiber_gt[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling
       -- sampled_indices = batch_size x 1
@@ -323,20 +300,18 @@ function layer:sample(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hidden state
-      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-      --                                          hiber_state_final, self.rnn_size)
-      -- if t == 1 then
-      --     -- self.output[t] = self:hidden_state_update(self.output[t],
-      --     --                              torch.zeros(batch_size, self.output_size):float():cuda(),
-      --     --                              hiber_state_final,
-      --     --                              self.output_size)
-      -- else
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, self.rnn_size)
+      -- if t ~= 1 then
       --     self.output[t] = self:hidden_state_update(self.output[t],
       --                                  self.output[t-1],
       --                                  hiber_state_final,
       --                                  self.output_size)
       -- end
-
+      self.output[t] = self:hidden_state_update(self.output[t],
+                                   self.output[t]:clone():fill(self.no_update_value),
+                                   hiber_state_final,
+                                   self.output_size)
   end
 
   return {self.output, torch.exp(self.hiber_state)}

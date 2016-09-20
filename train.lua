@@ -38,7 +38,7 @@ cmd:option('-weight_decay',0.95,'weight decay')
 cmd:option('-dropout',0.5,'drop out, 0 = no dropout')
 cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 4,'number of full passes through the training data')
+cmd:option('-max_epochs', 9,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -61,6 +61,7 @@ torch.manualSeed(opt.seed)
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
+local no_update_value = -1
 
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
@@ -81,8 +82,9 @@ if opt.gpuid >= 0 then
     end
 end
 
---local sigma = {0.1, 0.5, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+-- local sigma = {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
+   local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0}
+-- local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -126,6 +128,7 @@ else
     rnn_opt.num_layers = opt.num_layers
     rnn_opt.dropout = opt.dropout
     rnn_opt.seq_length = opt.seq_length
+    rnn_opt.no_update_value = no_update_value
     if opt.model == '1vsA_lstm' then rnn_opt.is1vsA = true
       else rnn_opt.is1vsA = false end
     -- now hiber gate is only available for 1vsA_lstm
@@ -226,6 +229,9 @@ function eval_split(split_index, max_batches)
                     end
                 end
             end 
+            if opt.gpuid >= 0 then
+                hiber_y = hiber_y:float():cuda()
+            end
         end
 
         -- convert to one hot vector
@@ -239,7 +245,6 @@ function eval_split(split_index, max_batches)
         if opt.gpuid >= 0 then
             x = x:float():cuda()
             y = y:float():cuda()
-            hiber_y = hiber_y:float():cuda()
         end
 
         protos.rnn:training()
@@ -255,7 +260,10 @@ function eval_split(split_index, max_batches)
         end
         for t = 1, opt.seq_length do
             -- if opt.is_balanced then protos.criterion = nn.BCECriterion(y*(opt.n_class-2)+1); end
-            loss = loss + protos.criterion:forward(predictions[t], y)
+            local prediction = predictions[t]:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
+                           + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
+            loss = loss + protos.criterion:forward(prediction, y)
+                        / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
@@ -295,12 +303,11 @@ function feval(x)
                 end
             end
         end 
+        if opt.gpuid >= 0 then
+            hiber_y = hiber_y:cuda()
+        end
     end
-    if opt.gpuid >= 0 then
-        hiber_y = hiber_y:cuda()
-    end
-    
-    -- convert to one hot vector
+        -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
     for t = 1, input_seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
@@ -341,9 +348,13 @@ function feval(x)
     end
     local dpredictions = predictions:clone():fill(0)
     if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions:size(3)-1) end
+    print(predictions:max(), predictions[predictions:ge(0)]:mean())
     for t = 1, opt.seq_length do
-        loss = loss + protos.criterion:forward(predictions[t], y)
-        dpredictions[t]:copy(protos.criterion:backward(predictions[t], y))
+        local prediction = predictions[t]:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
+                           + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
+        loss = loss + protos.criterion:forward(prediction, y)
+                        / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
+        dpredictions[t]:copy(protos.criterion:backward(prediction, y))
         if opt.hiber_gate then
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
@@ -354,7 +365,7 @@ function feval(x)
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
-            dpredictions[t]:cmul(y*5+1)
+            dpredictions[t]:cmul(y*50+1)
         end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end

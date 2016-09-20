@@ -1,5 +1,5 @@
 import random
-#import string
+import string
 
 n_data = 100
 n_class = 10 #start from 1
@@ -32,12 +32,12 @@ for ind, line in enumerate(grammar_list):
                 label_flag = True
         action2 = grammar_list[action2_label-1]
         while not flag:
-            data_line = ''#.join(random.sample(string.uppercase, random.randint(0,3)))
+            data_line = ''.join(random.sample(string.uppercase, random.randint(0,3)))
             for each in seq:
                 repeated_num = random.randint(1, 5)
                 for w in xrange(repeated_num):
                     data_line += each
-                data_line += ''#.join(random.sample(string.uppercase, random.randint(0,3)))
+                data_line += ''.join(random.sample(string.uppercase, random.randint(0,3)))
                 length = random.randint(0, 3)
                 action2_line = ''
                 action2_seq = action2[action2Ind:action2Ind+length]
@@ -46,7 +46,7 @@ for ind, line in enumerate(grammar_list):
                     repeated_num = random.randint(1, 5)
                     for w in xrange(repeated_num):
                         action2_line += item
-                    #action2_line += ''.join(random.sample(string.uppercase, random.randint(0, 3)))
+                    action2_line += ''.join(random.sample(string.uppercase, random.randint(0, 3)))
                 data_line += action2_line
             if data_line not in train_list:
                flag = True

@@ -88,8 +88,11 @@ for i = 1, n_data do
     local hiber_y
     -- hiber_y: seq_length x batch_size x output_size+1
     if opt.hiber_gate then
+        if opt.overlap then
+            y_onehot = y_onehot[{{1},{}}] + y_onehot[{{2},{}}]
+        end
         hiber_y = torch.zeros(seq_length, y_onehot:size(1), y_onehot:size(2)+1)
-        local invalid_x = x:le(26)
+        local invalid_x = x:le(26) -- batch_size x input_size
         for j = 1, seq_length do
             hiber_y[{{j},{},{1,y_onehot:size(2)}}] = y_onehot:clone()
             local indices = torch.range(1, y_onehot:size(1))[invalid_x[{{},{j}}]]
@@ -100,9 +103,9 @@ for i = 1, n_data do
                 end
             end
         end 
-    end
-    if opt.gpuid >= 0 then
-        hiber_y = hiber_y:cuda()
+        if opt.gpuid >= 0 then
+            hiber_y = hiber_y:cuda()
+        end
     end
 
     local x_input = torch.zeros(seq_length, 1 , vocab_size):cuda()
@@ -138,7 +141,8 @@ for i = 1, n_data do
     local final_pred = torch.CudaTensor(opt.n_class):fill(0)
     local predictions, hiber_predictions
     if opt.hiber_gate then 
-        local rnn_res = protos.rnn:sample(x_input)
+        local rnn_res = protos.rnn:sample({x_input, hiber_y})
+        -- local rnn_res = protos.rnn:sample({x_input})
         predictions = rnn_res[1]
         hiber_predictions = rnn_res[2]
     else
@@ -165,8 +169,11 @@ for i = 1, n_data do
         --]]
         
         local _, pred_ind = hiber_predictions[t]:max(2)
-        local _, gt_ind = hiber_y[t]:max(2)
-        if pred_ind:squeeze() == gt_ind:squeeze() then
+        local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
+        if gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
+        if not opt.overlap and pred_ind:squeeze() == gt_ind:squeeze() then
+            hiber_accuracy = hiber_accuracy + 1
+        elseif opt.overlap and (pred_ind:squeeze() == gt_ind[1] or pred_ind:squeeze() == gt_ind[2]) then
             hiber_accuracy = hiber_accuracy + 1
         end
         hiber_total = hiber_total + 1
@@ -234,7 +241,7 @@ for i = 1, n_data do
         _, res_rank = torch.sort(final_pred)
         res_y1 = res_rank[-1]
         res_y2 = res_rank[-2]
-        if res_y1 == y[1] or res_y1 == y[2] and res_y2 == y[1] or res_y2 == y[2] then
+        if (res_y1 == y[1] or res_y1 == y[2]) and (res_y2 == y[1] or res_y2 == y[2]) then
             first_two = first_two + 1
         end
         res_y = increasing_ind:maskedSelect(final_pred:gt(0.5):byte())
@@ -272,7 +279,7 @@ else
     print("Accuracy of only one is correct or two are correct")
     print(accuracy_1 / total)
     print("Accracy as long as the result consists of the two classes")
-    print(accuracy_2_ / total)
+    print(accuracy_1_ / total)
     print("Accuracy as first highest two are correct")
     print(first_two / total)
     print("Accuracy of hiber_gate")
