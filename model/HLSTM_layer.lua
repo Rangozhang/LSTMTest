@@ -25,8 +25,10 @@ function layer:__init(opt)
         self.rnn_size/self.group, self.num_layers, self.group, self.dropout, true)
       -- hiber gate: all vs. all mode => hidden_state concated and output 10
       -- TODO: embeded size is given by rnn_size, try something else
-      self.hiber_gate = hiber_gate(self.rnn_size,
-        self.input_size, self.rnn_size/self.group, self.output_size+1)
+      -- self.hiber_gate = hiber_gate(self.rnn_size,
+      --   self.input_size, 6*self.group, self.output_size+1)
+      self.hiber_gate = hiber_gate2(self.rnn_size,
+        self.input_size, 6*self.group, self.output_size+1, self.group)
       self.hiber_gate2 = linear_classifier(self.input_size, 2)
   --[[
   else 
@@ -257,19 +259,19 @@ function layer:updateOutput(input)
       self.state[t] = {} -- the rest is state
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hiber state
-      -- local rnn_size_each = self.rnn_size/self.group
-      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-      --                                          hiber_state_final, rnn_size_each)
+      local rnn_size_each = self.rnn_size/self.group
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, rnn_size_each)
       -- if t ~= 1 then
       --     self.output[t] = self:hidden_state_update(self.output[t],
       --                                  self.output[t-1],
       --                                  hiber_state_final,
       --                                  self.output_size)
       -- end
-      -- self.output[t] = self:hidden_output_update(self.output[t],
-      --                                  self.output[t]:clone():fill(self.no_update_value),
-      --                                  hiber_state_final,
-      --                                  self.output_size)
+      self.output[t] = self:hidden_output_update(self.output[t],
+                                       self.output[t]:clone():fill(self.no_update_value),
+                                       hiber_state_final,
+                                       self.output_size)
   end
   return {self.output, self.hiber_state, self.hiber_state2}
 end
@@ -373,18 +375,18 @@ function layer:sample(input)
       for i=1,self.num_state do table.insert(self.state[t], out[i]) end
       -- update the state according to hidden state
       local rnn_size_each = self.rnn_size/self.group
-      -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
-      --                                          hiber_state_final, rnn_size_each)
+      self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
+                                               hiber_state_final, rnn_size_each)
       -- if t ~= 1 then
       --     self.output[t] = self:hidden_state_update(self.output[t],
       --                                  self.output[t-1],
       --                                  hiber_state_final,
       --                                  self.output_size)
       -- end
-      -- self.output[t] = self:hidden_output_update(self.output[t],
-      --                              self.output[t]:clone():fill(self.no_update_value),
-      --                              hiber_state_final,
-      --                              self.output_size)
+      self.output[t] = self:hidden_output_update(self.output[t],
+                                   self.output[t]:clone():fill(self.no_update_value),
+                                   hiber_state_final,
+                                   self.output_size)
   end
 
   return {self.output, torch.exp(self.hiber_state), torch.exp(self.hiber_state2)}

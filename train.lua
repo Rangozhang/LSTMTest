@@ -146,8 +146,8 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(1)
-        weights[opt.n_class+1] = 2
+        local weights = torch.zeros(opt.n_class+1):fill(10)
+        weights[opt.n_class+1] = 1
         protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
         protos.hiber_gate_criterion2 = nn.ClassNLLCriterion(torch.Tensor{1.5, 1}) -- more noise
     end
@@ -444,9 +444,9 @@ for i = 1, iterations do
     trainLogger:add{
         ['LSTM-Loss'] = lstm_loss,
         ['Hiber-loss'] = hiber_loss,
-        ['Hiber-loss2'] = hiber_loss2,
+        -- ['Hiber-loss2'] = hiber_loss2,
     }
-    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-', ['Hiber-loss2'] = '-'}
+    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'} --, ['Hiber-loss2'] = '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')

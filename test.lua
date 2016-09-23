@@ -144,8 +144,8 @@ for i = 1, n_data do
     local final_pred = torch.CudaTensor(opt.n_class):fill(0)
     local predictions, hiber_predictions, hiber_predictions2
     if opt.hiber_gate then 
-        local rnn_res = protos.rnn:sample({x_input, hiber_y})
-        -- local rnn_res = protos.rnn:sample({x_input})
+        -- local rnn_res = protos.rnn:sample({x_input, hiber_y})
+        local rnn_res = protos.rnn:sample({x_input})
         predictions = rnn_res[1]
         hiber_predictions = rnn_res[2]
         hiber_predictions2 = rnn_res[3]
@@ -182,6 +182,7 @@ for i = 1, n_data do
             flag2 = true
         elseif opt.overlap and (pred_ind:squeeze() == gt_ind[1] or pred_ind:squeeze() == gt_ind[2]) then
             hiber_accuracy = hiber_accuracy + 1
+            flag2 = true
         end
         if not flag2 then
             print(pred_ind:squeeze(), gt_ind:squeeze())
