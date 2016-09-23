@@ -31,14 +31,15 @@ cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
-cmd:option('-learning_rate',1e-2,'learning rate')
+cmd:option('-learning_rate',1e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.5,'learning rate decay')
 cmd:option('-learning_rate_decay_every', 1,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-weight_decay',0.95,'weight decay')
+cmd:option('-weight_decay',0.0005,'weight decay')
+cmd:option('-momentum',0.90, 'momentum')
 cmd:option('-dropout',0.5,'drop out, 0 = no dropout')
 cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 9,'number of full passes through the training data')
+cmd:option('-max_epochs', 6,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -83,8 +84,8 @@ if opt.gpuid >= 0 then
 end
 
 -- local sigma = {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
-   local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0}
--- local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+-- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0}
+local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -145,9 +146,10 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(10)
-        weights[opt.n_class+1] = 1
+        local weights = torch.zeros(opt.n_class+1):fill(1)
+        weights[opt.n_class+1] = 2
         protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+        protos.hiber_gate_criterion2 = nn.ClassNLLCriterion(torch.Tensor{1.5, 1}) -- more noise
     end
 end
 
@@ -289,22 +291,28 @@ function feval(x)
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1) -- 1 -> trianing
     local hiber_y
+    local hiber_y2
     -- hiber_y: seq_length x batch_size x output_size+1
     if opt.hiber_gate then
         hiber_y = torch.zeros(input_seq_length, y:size(1), y:size(2)+1)
+        hiber_y2 = torch.zeros(input_seq_length, y:size(1), 2)
         local invalid_x = x:le(26)
         for j = 1, input_seq_length do
             hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
+            hiber_y2[{{j},{},{1}}]:fill(1)
             local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
             if indices:nDimension() > 0 then
                 for i = 1, indices:size()[1] do
                     hiber_y[{{j},{indices[i]},{}}]:fill(0)
                     hiber_y[{{j},{indices[i]},{-1}}] = 1
+                    hiber_y2[{{j},{indices[i]},{1}}] = 0
+                    hiber_y2[{{j},{indices[i]},{2}}] = 1
                 end
             end
         end 
         if opt.gpuid >= 0 then
             hiber_y = hiber_y:cuda()
+            hiber_y2 = hiber_y2:cuda()
         end
     end
         -- convert to one hot vector
@@ -332,20 +340,26 @@ function feval(x)
     ------------------- forward pass -------------------
     local loss = 0
     local hiber_loss = 0
+    local hiber_loss2 = 0
     protos.rnn:training()
     local proto_outputs, 
           predictions,
           hiber_predictions,
-          dhiber_predictions
+          hiber_predictions2,
+          dhiber_predictions,
+          dhiber_predictions2
     if opt.hiber_gate then
         proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
         predictions = proto_outputs[1]
         hiber_predictions = proto_outputs[2]
+        hiber_predictions2 = proto_outputs[3]
         dhiber_predictions = hiber_predictions:clone():fill(0)
+        dhiber_predictions2 = hiber_predictions2:clone():fill(0)
     else 
         proto_outputs = protos.rnn:forward(x)
         predictions = proto_outputs
     end
+    -- derivative computation
     local dpredictions = predictions:clone():fill(0)
     if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions:size(3)-1) end
     print(predictions:max(), predictions[predictions:ge(0)]:mean())
@@ -362,6 +376,18 @@ function feval(x)
                                             hiber_predictions[t], hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
                                             hiber_predictions[t], hiber_y_indices))
+
+            local _, hiber_y_indices2 = hiber_y2[t]:max(2)
+            hiber_y_indices2 = hiber_y_indices2:squeeze():cuda()
+            -- print(hiber_predictions2[t])
+            -- print(hiber_y_indices2)
+            -- io.read()
+            hiber_loss2 = hiber_loss2 + protos.hiber_gate_criterion2:forward(
+                          hiber_predictions2[t], hiber_y_indices2)
+                          --torch.log(torch.CudaTensor{0, 1}:repeatTensor(opt.batch_size,1)), hiber_y_indices2)
+            dhiber_predictions2[t]:copy(protos.hiber_gate_criterion2:backward(
+                          hiber_predictions2[t], hiber_y_indices2))
+                          --torch.log(torch.CudaTensor{0, 1}:repeatTensor(opt.batch_size, 1)), hiber_y_indices2))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
@@ -375,20 +401,26 @@ function feval(x)
     ------------------ backward pass -------------------
     local dimg
     if opt.hiber_gate then
-        dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions})
+        dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions, dhiber_predictions2})
     else
         dimg = protos.rnn:backward(x, dpredictions)
     end
-    -- grad_params:div(opt.seq_length)
+    grad_params:div(opt.seq_length)
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    return {loss, hiber_loss}, grad_params
+    return {loss, hiber_loss, hiber_loss2}, grad_params
 end
 
 -- start optimization here
 print("start training:")
+-- rmsprop
 local optim_state = { learningRate = opt.learning_rate,
-                      alpha = opt.weight_decay }
+                      alpha = opt.momentum}
+-- sgd
+-- local optim_state = { learningRate = opt.learning_rate,
+--                       weightDecay = opt.weight_decay,
+--                       momentum = opt.momentum}
+
 
 local iterations = opt.max_epochs * loader.ntrain
 local loss0 = nil
@@ -403,15 +435,18 @@ for i = 1, iterations do
 
     local timer = torch.Timer()
     local _, loss = optim.rmsprop(feval, params, optim_state)
+    -- local _, loss = optim.sgd(feval, params, optim_state)
     local lstm_loss = loss[1][1]
     local hiber_loss = loss[1][2]
+    local hiber_loss2 = loss[1][3]
     local time = timer:time().real
 
     trainLogger:add{
         ['LSTM-Loss'] = lstm_loss,
         ['Hiber-loss'] = hiber_loss,
+        ['Hiber-loss2'] = hiber_loss2,
     }
-    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'}
+    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-', ['Hiber-loss2'] = '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')
@@ -431,7 +466,7 @@ for i = 1, iterations do
         local val_loss = val_losses[1]
         local val_hiber_loss = val_losses[2]
 
-        local savefile = string.format('%s/%s_epoch%d_%.2f_%.2f.t7', opt.checkpoint_dir, opt.model, epoch, val_loss, val_hiber_loss)
+        local savefile = string.format('%s/%s_epoch%d_%.2f_%.2f.t7', opt.checkpoint_dir, opt.model, epoch-1, val_loss, val_hiber_loss)
         print('Validating: '..epoch.."'s epoch loss = "..val_loss.." hiber_loss = "..val_hiber_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}

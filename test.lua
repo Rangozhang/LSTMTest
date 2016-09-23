@@ -55,7 +55,8 @@ end
 
 local split_sizes = {0.90,0.05,0.05}
 loader = DataLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes, opt.n_class, opt.nbatches, opt.overlap)
-n_data = loader.test_n_data
+-- n_data = loader.test_n_data
+n_data = 100
 vocab_mapping = loader.vocab_mapping
 vocab_size = loader.vocab_size
 vocab = {}
@@ -71,6 +72,8 @@ local accuracy_2 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1 = 0.0 --accuracy_for_each_class:clone()
 local accuracy_1_ = 0.0
 local first_two = 0.0
+
+local tmp1 = 0.0
 
 local hiber_accuracy = 0.0
 local hiber_total = 0.0
@@ -139,12 +142,13 @@ for i = 1, n_data do
     draw2 = torch.Tensor(seq_length):fill(0)
 
     local final_pred = torch.CudaTensor(opt.n_class):fill(0)
-    local predictions, hiber_predictions
+    local predictions, hiber_predictions, hiber_predictions2
     if opt.hiber_gate then 
         local rnn_res = protos.rnn:sample({x_input, hiber_y})
         -- local rnn_res = protos.rnn:sample({x_input})
         predictions = rnn_res[1]
         hiber_predictions = rnn_res[2]
+        hiber_predictions2 = rnn_res[3]
     else
         predictions = protos.rnn:sample(x_input)
     end
@@ -169,13 +173,27 @@ for i = 1, n_data do
         --]]
         
         local _, pred_ind = hiber_predictions[t]:max(2)
+        local _, pred_ind2 = hiber_predictions2[t]:max(2)
         local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
-        if gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
+        if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
+        local flag2 = false
         if not opt.overlap and pred_ind:squeeze() == gt_ind:squeeze() then
             hiber_accuracy = hiber_accuracy + 1
+            flag2 = true
         elseif opt.overlap and (pred_ind:squeeze() == gt_ind[1] or pred_ind:squeeze() == gt_ind[2]) then
             hiber_accuracy = hiber_accuracy + 1
         end
+        if not flag2 then
+            print(pred_ind:squeeze(), gt_ind:squeeze())
+        end
+
+        -- print(gt_ind[1], pred_ind2:squeeze())
+        local flag = false
+        if not opt.overlap and ((gt_ind[1] == 11 and pred_ind2:squeeze() == 11) or (gt_ind[1] ~= 11 and pred_ind2:squeeze() ~= 11)) then
+            tmp1 = tmp1 + 1
+            flag = true
+        end
+        -- if not flag then print(gt_ind[1], pred_ind2:squeeze()) end
         hiber_total = hiber_total + 1
     end
     if opt.draw then
@@ -273,6 +291,7 @@ if not opt.overlap then
 
     print("Accuracy of hiber_gate")
     print(hiber_accuracy / hiber_total)
+    print(tmp1 / hiber_total)
 else 
     print("Accuracy of exact correct:")
     print(accuracy_2 / total)
