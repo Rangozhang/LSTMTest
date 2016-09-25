@@ -144,8 +144,8 @@ for i = 1, n_data do
     local final_pred = torch.CudaTensor(opt.n_class):fill(0)
     local predictions, hiber_predictions, hiber_predictions2
     if opt.hiber_gate then 
-        -- local rnn_res = protos.rnn:sample({x_input, hiber_y})
-        local rnn_res = protos.rnn:sample({x_input})
+        local rnn_res = protos.rnn:sample({x_input, hiber_y})
+        -- local rnn_res = protos.rnn:sample({x_input})
         predictions = rnn_res[1]
         hiber_predictions = rnn_res[2]
         hiber_predictions2 = rnn_res[3]
