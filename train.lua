@@ -253,6 +253,7 @@ function eval_split(split_index, max_batches)
         local proto_outputs
         local predictions, hiber_predictions
         if opt.hiber_gate then
+            local cur_sigma = sigma[epoch] or sigma[#sigma]
             proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
             predictions = proto_outputs[1]
             hiber_predictions = proto_outputs[2]
