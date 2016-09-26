@@ -83,9 +83,9 @@ if opt.gpuid >= 0 then
     end
 end
 
--- local sigma = {0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}
--- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.0, 1.0}
-local sigma = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+-- local sigma = {0.0, 1.0}
+-- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
+local sigma = {0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -254,7 +254,7 @@ function eval_split(split_index, max_batches)
         local predictions, hiber_predictions
         if opt.hiber_gate then
             local cur_sigma = sigma[epoch] or sigma[#sigma]
-            proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
+            proto_outputs = protos.rnn:forward{x, cur_sigma, hiber_y}
             predictions = proto_outputs[1]
             hiber_predictions = proto_outputs[2]
         else
@@ -350,7 +350,8 @@ function feval(x)
           dhiber_predictions,
           dhiber_predictions2
     if opt.hiber_gate then
-        proto_outputs = protos.rnn:forward{x, sigma[epoch], hiber_y}
+        local cur_sigma = sigma[epoch] or sigma[#sigma]
+        proto_outputs = protos.rnn:forward{x, cur_sigma, hiber_y}
         predictions = proto_outputs[1]
         hiber_predictions = proto_outputs[2]
         hiber_predictions2 = proto_outputs[3]
