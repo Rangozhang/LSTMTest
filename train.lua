@@ -39,7 +39,7 @@ cmd:option('-momentum',0.90, 'momentum')
 cmd:option('-dropout',0.5,'drop out, 0 = no dropout')
 cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 12,'number of full passes through the training data')
+cmd:option('-max_epochs', 16,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -85,7 +85,8 @@ end
 
 -- local sigma = {0.0, 1.0}
 -- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
-local sigma = {0.0}
+local sigma = {0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
+-- local sigma = {0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -106,11 +107,11 @@ if string.len(opt.init_from) > 0 and not opt.finetune then
     protos = checkpoint.protos
     -- make sure the vocabs are the same
     local vocab_compatible = true
-    for c,i in pairs(checkpoint.vocab) do 
-        if not vocab[c] == i then 
-            vocab_compatible = false
-        end
-    end
+    -- for c,i in pairs(checkpoint.vocab) do 
+    --     if not vocab[c] == i then 
+    --         vocab_compatible = false
+    --     end
+    -- end
     assert(vocab_compatible, 'error, the character vocabulary for this dataset' ..
         'and the one in the saved checkpoint are not the same. This is trouble.')
     -- overwrite model settings based on checkpoint to ensure compatibility
@@ -491,10 +492,10 @@ for i = 1, iterations do
     end
     -- loss exploding
     if loss0 == nil then loss0 = lstm_loss end
-    if lstm_loss > loss0 * 3 then
-        print('lstm loss is exploding, aborting.')
-        break
-    end
+    -- if lstm_loss > loss0 * 3 then
+    --     print('lstm loss is exploding, aborting.')
+    --     break
+    -- end
     if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
     if hiber_loss > hiber_loss0 * 3 then
         print('hiber loss is exploding, aborting.')
