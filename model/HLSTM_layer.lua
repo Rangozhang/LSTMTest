@@ -28,8 +28,7 @@ function layer:__init(opt)
       -- self.hiber_gate = hiber_gate(self.rnn_size,
       --   self.input_size, 6*self.group, self.output_size+1)
       self.hiber_gate = hiber_gate2(self.rnn_size,
-        self.input_size, 6*self.group, self.output_size+1, self.group)
-      self.hiber_gate2 = linear_classifier(self.input_size, 2)
+        self.input_size, 16*self.group, self.output_size+1, self.group)
   --[[
   else 
       self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size,
@@ -170,17 +169,14 @@ function layer:parameters()
   -- we only have two internal modules, return their params
   local p1, g1 = self.core:parameters()
   local p2, g2 = self.hiber_gate:parameters()
-  local p22, g22 = self.hiber_gate2:parameters()
 
   local params = {}
   for k, v in pairs(p1) do table.insert(params, v) end
   for k, v in pairs(p2) do table.insert(params, v) end
-  for k, v in pairs(p22) do table.insert(params, v) end
   
   local grad_params = {}
   for k, v in pairs(g1) do table.insert(grad_params, v) end
   for k, v in pairs(g2) do table.insert(grad_params, v) end
-  for k, v in pairs(g22) do table.insert(grad_params, v) end
 
   return params, grad_params
 end
@@ -190,14 +186,12 @@ function layer:training()
   if self.clones == nil then self:createClones() end
   for k,v in pairs(self.clones) do v:training() end
   self.hiber_gate:training()
-  self.hiber_gate2:training()
 end
 
 function layer:evaluate()
   if self.clones == nil then self:createClones() end
   for k,v in pairs(self.clones) do v:evaluate() end
   self.hiber_gate:evaluate()
-  self.hiber_gate2:evaluate()
 end
 
 -- input is a table {input, sigma, hiber_state_groundtruth}
@@ -223,9 +217,6 @@ function layer:updateOutput(input)
   self.hiber_state = self.output.new()
   self.hiber_state:resize(self.seq_length, batch_size, self.output_size+1)
   
-  self.hiber_state2 = self.output.new()
-  self.hiber_state2:resize(self.seq_length, batch_size, 2)
-
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
   self.inputs = {}
@@ -235,9 +226,6 @@ function layer:updateOutput(input)
       self.hiber_state[t] = self.hiber_gate:forward
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()} -- only using the h of the last layer
-      self.hiber_state2[t] = self.hiber_gate2:forward(seq[t])
-                                --{nn.JoinTable(2):cuda():forward(self.state[t-1]):fill(1), seq[t]}
-                                --{self.state[t-1][self.num_state]:clone():fill(1), seq[t]:clone()}
       -- choose the correct hiber_state
       local hiber_state_final = self.usingHGResult and torch.exp(self.hiber_state[t]):clone()
                                                   or  hiber_state_groundtruth[t]:clone()
@@ -273,7 +261,7 @@ function layer:updateOutput(input)
                                        hiber_state_final,
                                        self.output_size)
   end
-  return {self.output, self.hiber_state, self.hiber_state2}
+  return {self.output, self.hiber_state}
 end
 
 -- gradOutput is a table {lstm_gradOutput, hiber_gradOutput}
@@ -289,8 +277,6 @@ function layer:updateGradInput(input, gradOutput)
   local hiber_gradOutput = gradOutput[2]
   assert(hiber_gradOutput:size(1) == self.seq_length
      and hiber_gradOutput:size(3) == self.output_size + 1)
-
-  local hiber_gradOutput2 = gradOutput[3]
 
   -- LSTM framework backward
   local dstate = {[self.seq_length] = self.init_state}
@@ -316,9 +302,6 @@ function layer:updateGradInput(input, gradOutput)
   self.hiber_gate:backward({concat_state, input:view(-1, self.input_size)},
                              hiber_gradOutput:view(-1, self.output_size+1))
 
-  self.hiber_gate2:backward({concat_state:clone():fill(1), input:view(-1, self.input_size)},
-                            hiber_gradOutput2:view(-1, 2))
-
   self.gradInput = dinputs
   return self.gradInput
 end
@@ -340,9 +323,6 @@ function layer:sample(input)
   self.hiber_state = self.output.new()
   self.hiber_state:resize(input_seq_length, batch_size, self.output_size+1)
 
-  self.hiber_state2 = self.output.new()
-  self.hiber_state2:resize(input_seq_length, batch_size, 2)
-
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
   self.inputs = {}
@@ -351,9 +331,6 @@ function layer:sample(input)
       self.hiber_state[t] = self.hiber_gate:forward
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()}
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
-      self.hiber_state2[t] = self.hiber_gate2:forward(seq[t])
-                                --{self.state[t-1][self.num_state]:clone():fill(1), seq[t]:clone()}
-                                -- {nn.JoinTable(2):cuda():forward(self.state[t-1]):fill(1), seq[t]}
       local hiber_state_final = hiber_gt == nil and torch.exp(self.hiber_state[t]):clone()
                                 or hiber_gt[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
@@ -389,5 +366,5 @@ function layer:sample(input)
                                    self.output_size)
   end
 
-  return {self.output, torch.exp(self.hiber_state), torch.exp(self.hiber_state2)}
+  return {self.output, torch.exp(self.hiber_state)}
 end

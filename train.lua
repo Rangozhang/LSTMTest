@@ -85,8 +85,8 @@ end
 
 -- local sigma = {0.0, 1.0}
 -- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
-local sigma = {0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
--- local sigma = {0.0}
+-- local sigma = {0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
+local sigma = {0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -147,10 +147,10 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(10)
+        local weights = torch.zeros(opt.n_class+1):fill(15)
         weights[opt.n_class+1] = 1
-        protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
-        protos.hiber_gate_criterion2 = nn.ClassNLLCriterion(torch.Tensor{1.5, 1}) -- more noise
+        -- protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+        protos.hiber_gate_criterion = nn.BCECriterion(weights) 
     end
 end
 
@@ -269,9 +269,9 @@ function eval_split(split_index, max_batches)
             loss = loss + protos.criterion:forward(prediction, y)
                         / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
             if opt.hiber_gate then
-                local _, hiber_y_indices = hiber_y[t]:max(2)
-                hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y_indices)
+                -- local _, hiber_y_indices = hiber_y[t]:max(2)
+                -- hiber_y_indices = hiber_y_indices:squeeze():cuda()
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
             end
         end
 
@@ -293,28 +293,22 @@ function feval(x)
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1) -- 1 -> trianing
     local hiber_y
-    local hiber_y2
     -- hiber_y: seq_length x batch_size x output_size+1
     if opt.hiber_gate then
         hiber_y = torch.zeros(input_seq_length, y:size(1), y:size(2)+1)
-        hiber_y2 = torch.zeros(input_seq_length, y:size(1), 2)
         local invalid_x = x:le(26)
         for j = 1, input_seq_length do
             hiber_y[{{j},{},{1,y:size(2)}}] = y:clone()
-            hiber_y2[{{j},{},{1}}]:fill(1)
             local indices = torch.range(1,y:size(1))[invalid_x[{{},{j}}]]
             if indices:nDimension() > 0 then
                 for i = 1, indices:size()[1] do
                     hiber_y[{{j},{indices[i]},{}}]:fill(0)
                     hiber_y[{{j},{indices[i]},{-1}}] = 1
-                    hiber_y2[{{j},{indices[i]},{1}}] = 0
-                    hiber_y2[{{j},{indices[i]},{2}}] = 1
                 end
             end
         end 
         if opt.gpuid >= 0 then
             hiber_y = hiber_y:cuda()
-            hiber_y2 = hiber_y2:cuda()
         end
     end
         -- convert to one hot vector
@@ -342,22 +336,17 @@ function feval(x)
     ------------------- forward pass -------------------
     local loss = 0
     local hiber_loss = 0
-    local hiber_loss2 = 0
     protos.rnn:training()
     local proto_outputs, 
           predictions,
           hiber_predictions,
-          hiber_predictions2,
-          dhiber_predictions,
-          dhiber_predictions2
+          dhiber_predictions
     if opt.hiber_gate then
         local cur_sigma = sigma[epoch] or sigma[#sigma]
         proto_outputs = protos.rnn:forward{x, cur_sigma, hiber_y}
         predictions = proto_outputs[1]
         hiber_predictions = proto_outputs[2]
-        hiber_predictions2 = proto_outputs[3]
         dhiber_predictions = hiber_predictions:clone():fill(0)
-        dhiber_predictions2 = hiber_predictions2:clone():fill(0)
     else 
         proto_outputs = protos.rnn:forward(x)
         predictions = proto_outputs
@@ -373,28 +362,18 @@ function feval(x)
                         / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
         dpredictions[t]:copy(protos.criterion:backward(prediction, y))
         if opt.hiber_gate then
-            local _, hiber_y_indices = hiber_y[t]:max(2)
-            hiber_y_indices = hiber_y_indices:squeeze():cuda()
+            -- local _, hiber_y_indices = hiber_y[t]:max(2)
+            -- hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            hiber_predictions[t], hiber_y_indices)
+                                            hiber_predictions[t], hiber_y[t])
+                                            -- hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            hiber_predictions[t], hiber_y_indices))
-
-            local _, hiber_y_indices2 = hiber_y2[t]:max(2)
-            hiber_y_indices2 = hiber_y_indices2:squeeze():cuda()
-            -- print(hiber_predictions2[t])
-            -- print(hiber_y_indices2)
-            -- io.read()
-            hiber_loss2 = hiber_loss2 + protos.hiber_gate_criterion2:forward(
-                          hiber_predictions2[t], hiber_y_indices2)
-                          --torch.log(torch.CudaTensor{0, 1}:repeatTensor(opt.batch_size,1)), hiber_y_indices2)
-            dhiber_predictions2[t]:copy(protos.hiber_gate_criterion2:backward(
-                          hiber_predictions2[t], hiber_y_indices2))
-                          --torch.log(torch.CudaTensor{0, 1}:repeatTensor(opt.batch_size, 1)), hiber_y_indices2))
+                                            hiber_predictions[t], hiber_y[t]))
+                                            -- hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
-            dpredictions[t]:cmul(y*50+1)
+            dpredictions[t]:cmul(y*15+1)
         end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
@@ -404,14 +383,14 @@ function feval(x)
     ------------------ backward pass -------------------
     local dimg
     if opt.hiber_gate then
-        dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions, dhiber_predictions2})
+        dimg = protos.rnn:backward(x, {dpredictions, dhiber_predictions})
     else
         dimg = protos.rnn:backward(x, dpredictions)
     end
     grad_params:div(opt.seq_length)
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    return {loss, hiber_loss, hiber_loss2}, grad_params
+    return {loss, hiber_loss}, grad_params
 end
 
 -- start optimization here
@@ -441,15 +420,13 @@ for i = 1, iterations do
     -- local _, loss = optim.sgd(feval, params, optim_state)
     local lstm_loss = loss[1][1]
     local hiber_loss = loss[1][2]
-    local hiber_loss2 = loss[1][3]
     local time = timer:time().real
 
     trainLogger:add{
         ['LSTM-Loss'] = lstm_loss,
         ['Hiber-loss'] = hiber_loss,
-        -- ['Hiber-loss2'] = hiber_loss2,
     }
-    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'} --, ['Hiber-loss2'] = '-'}
+    trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'}
     trainLogger.showPlot = false
     trainLogger:plot()
     os.execute('convert -density 200 '..'./log/train-'..opt.model..'-'..opt.gpuid..'.log.eps ./log/train-'..opt.model..'-'..opt.gpuid..'.png')
@@ -491,14 +468,14 @@ for i = 1, iterations do
         break -- halt
     end
     -- loss exploding
-    if loss0 == nil then loss0 = lstm_loss end
+    -- if loss0 == nil then loss0 = lstm_loss end
     -- if lstm_loss > loss0 * 3 then
     --     print('lstm loss is exploding, aborting.')
     --     break
     -- end
-    if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
-    if hiber_loss > hiber_loss0 * 3 then
-        print('hiber loss is exploding, aborting.')
-        break
-    end
+    -- if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
+    -- if hiber_loss > hiber_loss0 * 3 then
+    --     print('hiber loss is exploding, aborting.')
+    --     break
+    -- end
 end
