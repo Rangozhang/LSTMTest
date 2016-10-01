@@ -37,7 +37,7 @@ function layer:__init(opt)
   end
   for layer_idx = 1, opt.num_layers do
     for _,node in ipairs(self.core.forwardnodes) do
-        if node.data.annotations.name == "i2h_" .. layer_idx then --group_idx .. '_' .. layer_idx then
+        if node.data.annotations.name == "i2h_" .. layer_idx then
              print('setting forget gate biases to 1 in LSTM layer ' .. layer_idx)
              node.data.module.bias[{{self.rnn_size+1, 2*self.rnn_size}}]:fill(1.0)
         end
@@ -227,7 +227,7 @@ function layer:updateOutput(input)
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()} -- only using the h of the last layer
       -- choose the correct hiber_state
-      local hiber_state_final = self.usingHGResult and torch.exp(self.hiber_state[t]):clone()
+      local hiber_state_final = self.usingHGResult and self.hiber_state[t]:clone()
                                                   or  hiber_state_groundtruth[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling
@@ -261,6 +261,7 @@ function layer:updateOutput(input)
                                        hiber_state_final,
                                        self.output_size)
   end
+  print(self.hiber_state:mean())
   return {self.output, self.hiber_state}
 end
 
@@ -299,6 +300,8 @@ function layer:updateGradInput(input, gradOutput)
     concat_state[i] = self.state[i-1][self.num_state] -- nn.JoinTable(2):cuda():forward(self.state[i-1])
   end
   concat_state = nn.JoinTable(1):cuda():forward(concat_state)
+  print(concat_state:size(), input:view(-1, self.input_size):size(),
+              hiber_gradOutput:view(-1, self.output_size+1):size())
   self.hiber_gate:backward({concat_state, input:view(-1, self.input_size)},
                              hiber_gradOutput:view(-1, self.output_size+1))
 
@@ -331,7 +334,7 @@ function layer:sample(input)
       self.hiber_state[t] = self.hiber_gate:forward
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()}
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
-      local hiber_state_final = hiber_gt == nil and torch.exp(self.hiber_state[t]):clone()
+      local hiber_state_final = hiber_gt == nil and torch.self.hiber_state[t]:clone()
                                 or hiber_gt[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling
@@ -366,5 +369,5 @@ function layer:sample(input)
                                    self.output_size)
   end
 
-  return {self.output, torch.exp(self.hiber_state)}
+  return {self.output, self.hiber_state}
 end

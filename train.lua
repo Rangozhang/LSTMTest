@@ -147,10 +147,10 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(15)
+        local weights = torch.zeros(opt.n_class+1):fill(10)
         weights[opt.n_class+1] = 1
         -- protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
-        protos.hiber_gate_criterion = nn.BCECriterion(weights) 
+        protos.hiber_gate_criterion = nn.CrossEntropyCriterion(weights)
     end
 end
 
@@ -269,9 +269,9 @@ function eval_split(split_index, max_batches)
             loss = loss + protos.criterion:forward(prediction, y)
                         / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
             if opt.hiber_gate then
-                -- local _, hiber_y_indices = hiber_y[t]:max(2)
-                -- hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
+                local _, hiber_y_indices = hiber_y[t]:max(2)
+                hiber_y_indices = hiber_y_indices:squeeze():cuda()
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y_indices)
             end
         end
 
@@ -362,14 +362,12 @@ function feval(x)
                         / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
         dpredictions[t]:copy(protos.criterion:backward(prediction, y))
         if opt.hiber_gate then
-            -- local _, hiber_y_indices = hiber_y[t]:max(2)
-            -- hiber_y_indices = hiber_y_indices:squeeze():cuda()
+            local _, hiber_y_indices = hiber_y[t]:max(2)
+            hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            hiber_predictions[t], hiber_y[t])
-                                            -- hiber_y_indices)
+                                            hiber_predictions[t], hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            hiber_predictions[t], hiber_y[t]))
-                                            -- hiber_y_indices))
+                                            hiber_predictions[t], hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
@@ -468,14 +466,14 @@ for i = 1, iterations do
         break -- halt
     end
     -- loss exploding
-    -- if loss0 == nil then loss0 = lstm_loss end
+    if loss0 == nil then loss0 = lstm_loss end
     -- if lstm_loss > loss0 * 3 then
     --     print('lstm loss is exploding, aborting.')
     --     break
     -- end
-    -- if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
-    -- if hiber_loss > hiber_loss0 * 3 then
-    --     print('hiber loss is exploding, aborting.')
-    --     break
-    -- end
+    if hiber_loss0 == nil then hiber_loss0 = hiber_loss end
+    if hiber_loss > hiber_loss0 * 3 then
+        print('hiber loss is exploding, aborting.')
+        break
+    end
 end
