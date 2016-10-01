@@ -261,6 +261,7 @@ function layer:updateOutput(input)
                                        hiber_state_final,
                                        self.output_size)
   end
+  -- TODO: for debugging
   print(self.hiber_state:mean())
   return {self.output, self.hiber_state}
 end
@@ -279,9 +280,9 @@ function layer:updateGradInput(input, gradOutput)
   assert(hiber_gradOutput:size(1) == self.seq_length
      and hiber_gradOutput:size(3) == self.output_size + 1)
 
-  -- LSTM framework backward
   local dstate = {[self.seq_length] = self.init_state}
   for t=self.seq_length,1,-1 do
+    -- LSTM framework backward
     -- concat state gradients and output vector gradients at time step t
     local dout = {}
     for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
@@ -291,19 +292,21 @@ function layer:updateGradInput(input, gradOutput)
     dinputs[t] = dinputs_t[1] -- first element is the input vector
     dstate[t-1] = {} -- copy over rest to state grad
     for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs_t[k]) end
+
+    -- Hiber gate backward
+    self.hiber_gate:backward({self.state[t-1][self.num_state]:clone(), input[t]:clone()},
+                                                                hiber_gradOutput[t]:clone())
   end
 
   -- Hiber gate backward
   -- put flatten the first dim
-  local concat_state = {}
-  for i = 1, self.seq_length do
-    concat_state[i] = self.state[i-1][self.num_state] -- nn.JoinTable(2):cuda():forward(self.state[i-1])
-  end
-  concat_state = nn.JoinTable(1):cuda():forward(concat_state)
-  print(concat_state:size(), input:view(-1, self.input_size):size(),
-              hiber_gradOutput:view(-1, self.output_size+1):size())
-  self.hiber_gate:backward({concat_state, input:view(-1, self.input_size)},
-                             hiber_gradOutput:view(-1, self.output_size+1))
+  -- local concat_state = {}
+  -- for i = 1, self.seq_length do
+  --   concat_state[i] = self.state[i0][self.num_state] -- nn.JoinTable(2):cuda():forward(self.state[i-1])
+  -- end
+  -- concat_state = nn.JoinTable(1):cuda():forward(concat_state)
+  -- self.hiber_gate:backward({concat_state, input:view(-1, self.input_size):clone()},
+  --                            hiber_gradOutput:view(-1, self.output_size+1):clone())
 
   self.gradInput = dinputs
   return self.gradInput

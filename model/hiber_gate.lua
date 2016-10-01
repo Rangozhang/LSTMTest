@@ -36,8 +36,6 @@ function hiber_gate2(concated_rnn_size, input_size, embeded_size, output_size, g
   local noise_hidden = nn.Linear(output_size-1, embeded_size/group)(pre_output)
   local noise_output = nn.Linear(embeded_size/group, 1)(noise_hidden)
   local raw_output = nn.JoinTable(2){pre_output, noise_output}
-  -- local output = nn.LogSoftMax()(raw_output)
-  -- local output = nn.Normalize()(raw_output)
   return nn.gModule({h, input}, {raw_output})
 end
 
