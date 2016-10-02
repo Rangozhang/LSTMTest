@@ -35,6 +35,7 @@ cmd:text()
 
 local opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
+cutorch.setDevice(opt.gpuid+1)
 
 local checkpoint = torch.load(opt.model)
 local protos = checkpoint.protos
@@ -128,6 +129,7 @@ for i = 1, n_data do
         local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
         if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
 
+        -- if gt_ind[1] == 11 then print(hiber_predictions[t]) io.read() end
         if opt.overlap then
             if pred_ind[1] == gt_ind[1] then
                 hiber_confusion:batchAdd(torch.Tensor{pred_ind:squeeze()}, torch.Tensor{gt_ind[1]})
@@ -171,6 +173,8 @@ for i = 1, n_data do
     print(confusion)
     print("hiber confusion")
     print(hiber_confusion)
+    print("overlap accuracy")
+    print(first_two / total)
 end
 
 if opt.overlap then

@@ -147,10 +147,9 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(10)
+        local weights = torch.zeros(opt.n_class+1):fill(15)
         weights[opt.n_class+1] = 1
-        -- protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
-        protos.hiber_gate_criterion = nn.CrossEntropyCriterion(weights)
+        protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
     end
 end
 
@@ -167,6 +166,10 @@ params, grad_params = protos.rnn:getParameters()
 -- initialization
 if do_random_init then
     params:uniform(-0.08, 0.08) -- small uniform numbers, just uniform sampling
+    protos.rnn.core = require('util.weight-init')(protos.rnn.core, 'xavier')
+    if opt.hiber_gate then
+        protos.rnn.hiber_gate = require('util.weight-init')(protos.rnn.hiber_gate, 'xavier')
+    end
 end
 
 -- init a 1vsA model based on pre-trained AvsA model
@@ -271,7 +274,7 @@ function eval_split(split_index, max_batches)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y_indices)
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y_indices)
             end
         end
 
@@ -365,9 +368,9 @@ function feval(x)
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            hiber_predictions[t], hiber_y_indices)
+                                            torch.log(hiber_predictions[t]), hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            hiber_predictions[t], hiber_y_indices))
+                                            torch.log(hiber_predictions[t]), hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way

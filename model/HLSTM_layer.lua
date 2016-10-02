@@ -226,6 +226,7 @@ function layer:updateOutput(input)
       self.hiber_state[t] = self.hiber_gate:forward
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()} -- only using the h of the last layer
+      -- print(self.hiber_state[{t,1}])
       -- choose the correct hiber_state
       local hiber_state_final = self.usingHGResult and self.hiber_state[t]:clone()
                                                   or  hiber_state_groundtruth[t]:clone()
@@ -261,8 +262,6 @@ function layer:updateOutput(input)
                                        hiber_state_final,
                                        self.output_size)
   end
-  -- TODO: for debugging
-  print(self.hiber_state:mean())
   return {self.output, self.hiber_state}
 end
 
@@ -337,7 +336,7 @@ function layer:sample(input)
       self.hiber_state[t] = self.hiber_gate:forward
                                 {self.state[t-1][self.num_state]:clone(), seq[t]:clone()}
                                 --{nn.JoinTable(2):cuda():forward(self.state[t-1]), seq[t]}
-      local hiber_state_final = hiber_gt == nil and torch.self.hiber_state[t]:clone()
+      local hiber_state_final = hiber_gt == nil and self.hiber_state[t]:clone()
                                 or hiber_gt[t]:clone()
       assert(hiber_state_final:size(1) == batch_size)
       -- hiber_state binarization using sampling

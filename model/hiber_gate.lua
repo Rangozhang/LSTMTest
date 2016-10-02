@@ -32,18 +32,24 @@ function hiber_gate2(concated_rnn_size, input_size, embeded_size, output_size, g
   end
 
   local pre_output = nn.JoinTable(2)(pre_output_tbl)
+
   -- add one more dimension for the noise
-  local noise_hidden = nn.Linear(output_size-1, embeded_size/group)(pre_output)
-  local noise_output = nn.Linear(embeded_size/group, 1)(noise_hidden)
-  local raw_output = nn.JoinTable(2){pre_output, noise_output}
-  return nn.gModule({h, input}, {raw_output})
+  -- local noise_hidden = nn.Linear(output_size-1, embeded_size/group)(pre_output)
+  -- local noise_output = nn.Linear(embeded_size/group, 1)(noise_hidden)
+  -- local raw_output = nn.JoinTable(2){pre_output, noise_output}
+  local hidden = nn.Linear(output_size-1, output_size)(pre_output)
+  local raw_output = nn.Linear(output_size, output_size)(hidden)
+
+  local output_norm = nn.BatchNormalization(output_size)(raw_output)
+  local output = nn.SoftMax()(output_norm)
+  return nn.gModule({h, input}, {output})
 end
 
 function hiber_gate_each(h_size, input_size, embeded_size, output_size)
   local input = nn.Identity()()
   local h = nn.Identity()()
-  local embeded_h = nn.Sigmoid()(nn.Linear(h_size, embeded_size)(h))
-  local embeded_input = nn.Sigmoid()(nn.Linear(input_size, embeded_size)(input))
+  local embeded_h = nn.Sigmoid()(nn.BatchNormalization(embeded_size)(nn.Linear(h_size, embeded_size)(h)))
+  local embeded_input = nn.Sigmoid()(nn.BatchNormalization(embeded_size)(nn.Linear(input_size, embeded_size)(input)))
   local elementwise_product = nn.CMulTable()({embeded_h, embeded_input})
   local hidden_layer = nn.Linear(embeded_size, embeded_size)(elementwise_product)
   local output = nn.Linear(embeded_size, output_size)(hidden_layer)
