@@ -129,6 +129,12 @@ for i = 1, n_data do
         local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
         if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
 
+        --[[
+        print(tmp_str)
+        print(hiber_predictions[t])
+        io.read()
+        --]]
+
         -- if gt_ind[1] == 11 then print(hiber_predictions[t]) io.read() end
         if opt.overlap then
             if pred_ind[1] == gt_ind[1] then

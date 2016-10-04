@@ -28,7 +28,7 @@ function layer:__init(opt)
       -- self.hiber_gate = hiber_gate(self.rnn_size,
       --   self.input_size, 6*self.group, self.output_size+1)
       self.hiber_gate = hiber_gate2(self.rnn_size,
-        self.input_size, 16*self.group, self.output_size+1, self.group)
+        self.input_size, 6*self.group, self.output_size+1, self.group)
   --[[
   else 
       self.core = LSTM.lstm(self.input_size, self.output_size, self.rnn_size,
