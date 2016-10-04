@@ -28,6 +28,7 @@ cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-hiber_gate', false, 'weather use hiber gate or not')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
+cmd:option('-class_weight',15)
 cmd:option('-n_class', 10, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
@@ -39,7 +40,7 @@ cmd:option('-momentum',0.90, 'momentum')
 cmd:option('-dropout',0.5,'drop out, 0 = no dropout')
 cmd:option('-seq_length', 9,'number of timesteps to unroll for')
 cmd:option('-batch_size', 512,'number of sequences to train on in parallel')
-cmd:option('-max_epochs', 16,'number of full passes through the training data')
+cmd:option('-max_epochs', 9,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-train_frac',0.95,'fraction of data that goes into train set')
 cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
@@ -147,9 +148,10 @@ else
     end
     protos.criterion = nn.BCECriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(15)
+        local weights = torch.zeros(opt.n_class+1):fill(opt.class_weight)
         weights[opt.n_class+1] = 1
-        protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+        -- protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+        protos.hiber_gate_criterion = nn.BCECriterion(weights) 
     end
 end
 
@@ -274,7 +276,7 @@ function eval_split(split_index, max_batches)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y_indices)
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y[t]:clone()) -- hiber_y_indices)
             end
         end
 
@@ -368,9 +370,11 @@ function feval(x)
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            torch.log(hiber_predictions[t]), hiber_y_indices)
+                                            torch.log(hiber_predictions[t]), hiber_y[t])
+                                            -- hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            torch.log(hiber_predictions[t]), hiber_y_indices))
+                                            torch.log(hiber_predictions[t]), hiber_y[t])
+                                            -- hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
