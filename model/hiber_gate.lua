@@ -25,11 +25,12 @@ function hiber_gate2(concated_rnn_size, input_size, embeded_size, output_size, g
   local h_size_each = concated_rnn_size / group
 
   local pre_output_tbl = {}
-  local submodule = hiber_gate_each(concated_rnn_size/group, input_size, embeded_size/group, 1) -- embeded_size/group)
+  -- local submodule = hiber_gate_each(concated_rnn_size/group, input_size, embeded_size/group, 1) -- embeded_size/group)
 
   for i = 1, group do
     local h_each = nn.Narrow(2, (i-1)*h_size_each+1, h_size_each)(h)
-    local elementwise_product = submodule:clone('weight', 'bias', 'gradWeight', 'gradBias')({h_each, input})
+    local elementwise_product = hiber_gate_each(concated_rnn_size/group, input_size, embeded_size/group, 1){h_each, input}
+    -- local elementwise_product = submodule:clone('weight', 'bias', 'gradWeight', 'gradBias')({h_each, input})
     table.insert(pre_output_tbl, elementwise_product)
   end
 
@@ -43,7 +44,7 @@ function hiber_gate2(concated_rnn_size, input_size, embeded_size, output_size, g
   -- local raw_output = nn.Linear(output_size, output_size)(hidden)
 
   local output_norm = nn.BatchNormalization(output_size)(raw_output)
-  local output = nn.SoftMax()(output_norm)
+  local output = nn.Sigmoid()(output_norm)
   return nn.gModule({h, input}, {output})
 end
 

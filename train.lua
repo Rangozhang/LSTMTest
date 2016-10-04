@@ -276,7 +276,7 @@ function eval_split(split_index, max_batches)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y[t]:clone()) -- hiber_y_indices)
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t]:clone()) -- hiber_y_indices)
             end
         end
 
@@ -370,10 +370,10 @@ function feval(x)
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            torch.log(hiber_predictions[t]), hiber_y[t])
+                                            hiber_predictions[t], hiber_y[t])
                                             -- hiber_y_indices)
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            torch.log(hiber_predictions[t]), hiber_y[t])
+                                            hiber_predictions[t], hiber_y[t]))
                                             -- hiber_y_indices))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
@@ -451,7 +451,7 @@ for i = 1, iterations do
         local val_loss = val_losses[1]
         local val_hiber_loss = val_losses[2]
 
-        local savefile = string.format('%s/%s_epoch%d_%.2f_%.2f.t7', opt.checkpoint_dir, opt.model, epoch-1, val_loss, val_hiber_loss)
+        local savefile = string.format('%s/%s_epoch%d_%.2f_%.2f_gpuid%d.t7', opt.checkpoint_dir, opt.model, epoch-1, val_loss, val_hiber_loss, opt.gpuid)
         print('Validating: '..epoch.."'s epoch loss = "..val_loss.." hiber_loss = "..val_hiber_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
