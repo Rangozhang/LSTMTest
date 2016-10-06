@@ -2,7 +2,7 @@ import random
 import string
 
 n_data = 100
-n_class = 10 #start from 1
+n_class = 2 #start from 1
 f = open('gt.txt','r')
 f2 = open('overlapping_test.txt', 'w')
 f3 = open('input.txt','r')
@@ -27,7 +27,7 @@ for ind, line in enumerate(grammar_list):
         action2Ind = 0
         label_flag = False
         while not label_flag:
-            action2_label = random.randint(1,10)
+            action2_label = random.randint(1,n_class)
             if action2_label != int(class_list[ind]):
                 label_flag = True
         action2 = grammar_list[action2_label-1]

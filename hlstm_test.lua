@@ -26,7 +26,7 @@ cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-data_dir','data/test_')
 cmd:option('-batch_size',128)
 cmd:option('-seq_length', 9)
-cmd:option('-n_class', 10)
+cmd:option('-n_class', 2)
 cmd:option('-nbatches', 500)
 cmd:option('-overlap', false)
 cmd:option('-printing', false)
@@ -115,6 +115,7 @@ for i = 1, n_data do
     else rnn_res = protos.rnn:sample({x_input}) end
     predictions = rnn_res[1]
     hiber_predictions = rnn_res[2]
+    hidden_state = rnn_res[3]
 
     for t = 1, seq_length do
         prediction = predictions[t]
@@ -132,6 +133,8 @@ for i = 1, n_data do
         --[[
         print(tmp_str)
         print(hiber_predictions[t])
+        io.read()
+        print(hidden_state[t])
         io.read()
         --]]
 

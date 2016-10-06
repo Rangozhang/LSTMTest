@@ -27,7 +27,7 @@ function layer:__init(opt)
       -- TODO: embeded size is given by rnn_size, try something else
       -- self.hiber_gate = hiber_gate(self.rnn_size,
       --   self.input_size, 6*self.group, self.output_size+1)
-      self.hiber_gate = hiber_gate2(self.rnn_size,
+      self.hiber_gate = hiber_gate(self.rnn_size,
         self.input_size, 6*self.group, self.output_size+1, self.group)
   --[[
   else 
@@ -281,20 +281,26 @@ function layer:updateGradInput(input, gradOutput)
 
   local dstate = {[self.seq_length] = self.init_state}
   for t=self.seq_length,1,-1 do
+    -- Hiber gate backward
+    local gradH = self.hiber_gate:backward({self.state[t-1][self.num_state]:clone(), input[t]:clone()},
+                                                                hiber_gradOutput[t]:clone())
+    gradH = gradH[1]
+
     -- LSTM framework backward
     -- concat state gradients and output vector gradients at time step t
     local dout = {}
-    for k=1,#dstate[t] do table.insert(dout, dstate[t][k]) end
+    for k=1,#dstate[t] do
+        if k == #dstate[t] then
+            dstate[t][k] = dstate[t][k] + 100*gradH
+        end
+        table.insert(dout, dstate[t][k])
+    end
     table.insert(dout, lstm_gradOutput[t])
     local dinputs_t = self.clones[t]:backward(self.inputs[t], dout)
     -- split the gradient to xt and to state
     dinputs[t] = dinputs_t[1] -- first element is the input vector
     dstate[t-1] = {} -- copy over rest to state grad
     for k=2,self.num_state+1 do table.insert(dstate[t-1], dinputs_t[k]) end
-
-    -- Hiber gate backward
-    self.hiber_gate:backward({self.state[t-1][self.num_state]:clone(), input[t]:clone()},
-                                                                hiber_gradOutput[t]:clone())
   end
 
   -- Hiber gate backward
@@ -371,5 +377,5 @@ function layer:sample(input)
                                    self.output_size)
   end
 
-  return {self.output, self.hiber_state}
+  return {self.output, self.hiber_state, self.state}
 end

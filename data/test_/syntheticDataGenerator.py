@@ -1,7 +1,7 @@
 import random
 import string
 
-n_class = 10
+n_class = 2
 n_data = 10000
 f = open('gt.txt','r')
 f2 = open('input.txt', 'w')

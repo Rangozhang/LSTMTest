@@ -23,13 +23,13 @@ cmd:text('Options')
 -- data tinyshakespeare
 cmd:option('-data_dir','data/test_','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 320, 'size of LSTM internal state') -- to train 1vsA model
+cmd:option('-rnn_size', 32, 'size of LSTM internal state') -- to train 1vsA model
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-hiber_gate', false, 'weather use hiber gate or not')
 cmd:option('-is_balanced', false, 'if balance the training set for 1vsA model')
-cmd:option('-class_weight',15)
-cmd:option('-n_class', 10, 'number of categories')
+cmd:option('-class_weight',12)
+cmd:option('-n_class', 2, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
 cmd:option('-learning_rate',1e-3,'learning rate')
@@ -59,6 +59,8 @@ cmd:text()
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
+
+opt.rnn_size = opt.rnn_size * opt.n_class
 
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
@@ -276,7 +278,8 @@ function eval_split(split_index, max_batches)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t]:clone()) -- hiber_y_indices)
+                -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y_indices)
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
             end
         end
 
@@ -359,7 +362,7 @@ function feval(x)
     -- derivative computation
     local dpredictions = predictions:clone():fill(0)
     if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions:size(3)-1) end
-    print(predictions:max(), predictions[predictions:ge(0)]:mean())
+    -- print(predictions:max(), predictions[predictions:ge(0)]:mean())
     for t = 1, opt.seq_length do
         local prediction = predictions[t]:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
                            + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
@@ -369,16 +372,23 @@ function feval(x)
         if opt.hiber_gate then
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
+            -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
+            --                                 torch.log(hiber_predictions[t]),
+            --                                 hiber_y_indices)
+            -- dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
+            --                                 torch.log(hiber_predictions[t]),
+            --                                 hiber_y_indices))
+
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            hiber_predictions[t], hiber_y[t])
-                                            -- hiber_y_indices)
+                                            hiber_predictions[t],
+                                            hiber_y[t])
             dhiber_predictions[t]:copy(protos.hiber_gate_criterion:backward(
-                                            hiber_predictions[t], hiber_y[t]))
-                                            -- hiber_y_indices))
+                                            hiber_predictions[t],
+                                            hiber_y[t]))
         end
         if opt.model == '1vsA_lstm' and opt.is_balanced then
             --TODO: find out a more delegate way
-            dpredictions[t]:cmul(y*15+1)
+            dpredictions[t]:cmul(y*12+1)
         end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
