@@ -59,8 +59,9 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
       local top_h = outputs[#outputs]
       if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
       local proj = nn.Linear(rnn_size, rnn_size)(top_h):annotate{name='decoder'}
+      local proj_ = nn.ReLU(true)(proj)
       local proj2 = nn.BatchNormalization(output_size)(
-                        nn.Linear(rnn_size, output_size)(proj):annotate{name='decoder2'})
+                        nn.Linear(rnn_size, output_size)(proj_):annotate{name='decoder2'})
       --local proj2 = nn.Linear(rnn_size, output_size)(proj):annotate{name='decoder2'}
       local sig = nn.Sigmoid()(proj2)
       table.insert(outputs, sig)
