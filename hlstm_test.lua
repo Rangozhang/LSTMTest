@@ -123,20 +123,20 @@ for i = 1, n_data do
         for m = 1, prediction:size(2) do
             tmp_str = tmp_str .. '  ' .. string.format("%.3f", prediction[{1, m}])
         end
-        if opt.printing then print(tmp_str) end
+        -- if opt.printing then print(tmp_str) end
         final_pred = final_pred + prediction
         
         local _, pred_ind = hiber_predictions[t]:max(2)
         local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
         if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
 
-        --[[
-        print(tmp_str)
-        print(hiber_predictions[t])
-        io.read()
-        -- print(hidden_state[t][4])
-        -- io.read()
-        --]]
+        if opt.printing then
+          print(tmp_str)
+          print(hiber_predictions[t])
+          io.read()
+          -- print(hidden_state[t][4])
+          -- io.read()
+        end
 
         -- if gt_ind[1] == 11 then print(hiber_predictions[t]) io.read() end
         if opt.overlap then
@@ -156,13 +156,13 @@ for i = 1, n_data do
     for m = 1, final_pred:size(1) do
         tmp_str = tmp_str .. "  " .. string.format("%.3f", final_pred[{m}])
     end
-    if opt.printing then
-        print(tmp_str)
-        print(final_pred:sum())
-        print(final_pred)
-        print(y)
-        io.read()
-    end
+    -- if opt.printing then
+    --     print(tmp_str)
+    --     print(final_pred:sum())
+    --     print(final_pred)
+    --     print(y)
+    --     io.read()
+    -- end
     total = total + 1
 
     local _, res_rank = torch.sort(final_pred)

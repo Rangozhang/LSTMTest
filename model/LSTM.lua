@@ -63,8 +63,8 @@ function LSTM.lstm(input_size, output_size, rnn_size, n, dropout, withDecoder)
       local proj2 = nn.BatchNormalization(output_size)(
                         nn.Linear(rnn_size, output_size)(proj_):annotate{name='decoder2'})
       --local proj2 = nn.Linear(rnn_size, output_size)(proj):annotate{name='decoder2'}
-      local sig = nn.Sigmoid()(proj2)
-      table.insert(outputs, sig)
+      -- local sig = nn.Sigmoid()(proj2)
+      table.insert(outputs, proj2)
   end
 
   return nn.gModule(inputs, outputs)

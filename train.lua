@@ -28,7 +28,7 @@ cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm, 1vsA_lstm or Heirarchical_lstm')
 cmd:option('-hiber_gate', true, 'weather use hiber gate or not')
 cmd:option('-is_balanced', true, 'if balance the training set for 1vsA model')
-cmd:option('-class_weight',12)
+cmd:option('-class_weight',1.28)
 cmd:option('-n_class', 2, 'number of categories')
 cmd:option('-nbatches', 1000, 'number of training batches loader prepare')
 -- optimization
@@ -94,8 +94,8 @@ end
 
 -- local sigma = {0.0, 1.0}
 -- local sigma = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
--- local sigma = {0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
-local sigma = {0.0}
+local sigma = {0.0, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0}
+-- local sigma = {0.0}
 local epoch = 1
 
 -- create the data loader class
@@ -155,13 +155,15 @@ else
         rnn_opt.stride = {1, 3, 3}
         protos.rnn = nn.LSTMHierarchicalLayer(rnn_opt)
     end
-    protos.criterion = nn.BCECriterion()
+    -- protos.criterion = nn.BCECriterion()
+    protos.criterion = nn.ClassNLLCriterion()
     if opt.hiber_gate then 
-        local weights = torch.zeros(opt.n_class+1):fill(opt.class_weight)
-        weights[opt.n_class+1] = 1
+        local weights = torch.zeros(opt.n_class+1):fill(opt.class_weight/(opt.class_weight+1))
+        weights[opt.n_class+1] = 1/(opt.class_weight+1)
+        -- local weights = torch.Tensor{1.28, 1.27, 1}
         -- criterion_change
-        -- protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
-        protos.hiber_gate_criterion = nn.BCECriterion(weights) 
+        protos.hiber_gate_criterion = nn.ClassNLLCriterion(weights) 
+        -- protos.hiber_gate_criterion = nn.BCECriterion(weights) 
     end
 end
 
@@ -227,10 +229,8 @@ function eval_split(split_index, max_batches)
     loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
     local hiber_loss = 0
-    -- local rnn_state = {[0] = init_state}
     
     for i = 1,n do -- iterate over batches in the split
-        -- fetch a batch
         local x, y = loader:next_batch(split_index)
         local hiber_y
         -- hiber_y: seq_length x batch_size x output_size+1
@@ -279,16 +279,19 @@ function eval_split(split_index, max_batches)
         end
         for t = 1, opt.seq_length do
             -- if opt.is_balanced then protos.criterion = nn.BCECriterion(y*(opt.n_class-2)+1); end
-            local prediction = predictions[t]:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
-                           + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
-            loss = loss + protos.criterion:forward(prediction, y)
-                        / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
+            local _, y_indices = y:max(2)
+            y_indices = y_indices:squeeze():cuda()
+
+            local prediction = predictions[t] --:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
+            --                + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
+            loss = loss + protos.criterion:forward(torch.log(prediction), y_indices)
+            --             / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
             if opt.hiber_gate then
                 local _, hiber_y_indices = hiber_y[t]:max(2)
                 hiber_y_indices = hiber_y_indices:squeeze():cuda()
                 -- criterion_change
-                -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y_indices)
-                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
+                hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(torch.log(hiber_predictions[t]), hiber_y_indices)
+                -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(hiber_predictions[t], hiber_y[t])
             end
         end
 
@@ -301,6 +304,8 @@ function eval_split(split_index, max_batches)
     return {loss, hiber_loss}
 end
 
+local predic_mean = 0
+local predic_max = 0
 function feval(x)
     if x ~= params then
         params:copy(x)
@@ -309,6 +314,7 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(1) -- 1 -> trianing
+
     local hiber_y
     -- hiber_y: seq_length x batch_size x output_size+1
     if opt.hiber_gate then
@@ -328,7 +334,7 @@ function feval(x)
             hiber_y = hiber_y:cuda()
         end
     end
-        -- convert to one hot vector
+    -- convert to one hot vector
     local x_input = torch.zeros(input_seq_length, opt.batch_size, vocab_size)
     for t = 1, input_seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{},t}])
@@ -371,49 +377,53 @@ function feval(x)
     -- derivative computation
     local dpredictions = predictions:clone():fill(0)
     if opt.hiber_gate then assert(dpredictions:size(3) == dhiber_predictions:size(3)-1) end
-    print(predictions:max(), predictions[predictions:ge(0)]:mean())
+    predic_max = predictions:max()
+    predic_mean = predictions[predictions:ge(0)]:mean()
     for t = 1, opt.seq_length do
-        local prediction = predictions[t]:clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
-                           + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
-        loss = loss + protos.criterion:forward(prediction, y)
-                        / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
-        dpredictions[t]:copy(protos.criterion:backward(prediction, y))
+        local _, y_indices = y:max(2)
+        y_indices = y_indices:squeeze():cuda()
+
+        local prediction = predictions[t]-- :clone():cmul(predictions[t]:ne(no_update_value):typeAs(predictions))
+        --                    + y:clone():cmul(predictions[t]:eq(no_update_value):typeAs(predictions))
+        loss = loss + protos.criterion:forward(torch.log(prediction), y_indices)
+        --                 / prediction:min(2):ne(no_update_value):sum() * prediction:size(1)
+        dpredictions[t]:copy(protos.criterion:backward(torch.log(prediction), y_indices))
         if opt.hiber_gate then
             local _, hiber_y_indices = hiber_y[t]:max(2)
             hiber_y_indices = hiber_y_indices:squeeze():cuda()
 
-            local grad_mask = hiber_y[t]:clone()
-            local noise_rows = grad_mask[{{}, opt.n_class+1}]:eq(1)
-            grad_mask:indexFill(1, torch.range(1, noise_rows:size(1)):maskedSelect(noise_rows:byte()):long(), 1)
-            grad_mask[{{}, opt.n_class+1}]:fill(1)
+            -- local grad_mask = hiber_y[t]:clone()
+            -- local noise_rows = grad_mask[{{}, opt.n_class+1}]:eq(1)
+            -- grad_mask:indexFill(1, torch.range(1, noise_rows:size(1)):maskedSelect(noise_rows:byte()):long(), 1)
+            -- grad_mask[{{}, opt.n_class+1}]:fill(1)
 
             -- criterion_change
-            -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-            --                                 torch.log(hiber_predictions[t]),
-            --                                 hiber_y_indices)
-            -- dhiber_predictions[t]:copy((hiber_lr_list[epoch] or hiber_lr_list[#hiber_lr_list])
-            --                                 *protos.hiber_gate_criterion:backward(
-            --                                 torch.log(hiber_predictions[t]),
-            --                                 hiber_y_indices))
-
             hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
-                                            hiber_predictions[t]:clone():cmul(grad_mask),
-                                            hiber_y[t])
-            -- lower learning rate for hiber_gate
+                                            torch.log(hiber_predictions[t]),
+                                            hiber_y_indices)
             dhiber_predictions[t]:copy((hiber_lr_list[epoch] or hiber_lr_list[#hiber_lr_list])
                                             *protos.hiber_gate_criterion:backward(
-                                            hiber_predictions[t],
-                                            hiber_y[t]))
+                                            torch.log(hiber_predictions[t]),
+                                            hiber_y_indices))
+
+            -- hiber_loss = hiber_loss + protos.hiber_gate_criterion:forward(
+            --                                 hiber_predictions[t]:clone(), -- :cmul(grad_mask),
+            --                                 hiber_y[t])
+            -- -- lower learning rate for hiber_gate
+            -- dhiber_predictions[t]:copy((hiber_lr_list[epoch] or hiber_lr_list[#hiber_lr_list])
+            --                                 *protos.hiber_gate_criterion:backward(
+            --                                 hiber_predictions[t],
+            --                                 hiber_y[t]))
             
-            local gradForZero = 0.001
-            grad_mask = grad_mask*(1-gradForZero) + gradForZero
-            grad_mask:indexFill(1, torch.range(1, noise_rows:size(1)):maskedSelect(noise_rows:byte()):long(), 1)
-            dhiber_predictions[t]:cmul(grad_mask)
+            -- local gradForZero = 0.001
+            -- grad_mask = grad_mask*(1-gradForZero) + gradForZero
+            -- grad_mask:indexFill(1, torch.range(1, noise_rows:size(1)):maskedSelect(noise_rows:byte()):long(), 1)
+            -- dhiber_predictions[t]:cmul(grad_mask)
         end
-        if opt.model == '1vsA_lstm' and opt.is_balanced then
-            --TODO: find out a more delegate way
-            dpredictions[t]:cmul(y*12+1)
-        end
+        -- if opt.model == '1vsA_lstm' and opt.is_balanced then
+        --     --TODO: find out a more delegate way
+        --     dpredictions[t]:cmul(y*12+1)
+        -- end
         --cmul(randdroping_mask), y) -- to randomly drop with a rate of d_rate
     end
     -- the loss is the average loss across time steps
@@ -463,7 +473,7 @@ for i = 1, iterations do
 
     trainLogger:add{
         ['LSTM-Loss'] = lstm_loss,
-        ['Hiber-loss'] = hiber_loss/10,
+        ['Hiber-loss'] = hiber_loss,
     }
     trainLogger:style{['LSTM-Loss']= '-', ['Hiber-loss'] = '-'}
     trainLogger.showPlot = false
@@ -495,7 +505,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d epoch %d loss = %6.8f hiber_loss = %6.8f grad/param norm = %6.4e max grad = %6.4e min grad = %6.4e mean grad = %6.4e time/batch = %.2fs", i, iterations, epoch, lstm_loss, hiber_loss, grad_params:norm() / params:norm(), grad_params:max(), grad_params:min(), grad_params:mean(), time))
+        print(string.format("[%d:%.1f] lstm/hiber loss %6.4f/%6.4f grad/param norm %6.4e LSTM max/mean %.2f/%.2f t:%.2fs", epoch, i/loader.ntrain, lstm_loss, hiber_loss, grad_params:norm() / params:norm(), predic_max, predic_mean, time))
     end
    
     if i % 10 == 0 then collectgarbage() end

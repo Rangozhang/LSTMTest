@@ -40,10 +40,14 @@ function LSTM_1vsA.lstm(input_size, output_size, rnn_size, n, group, dropout, wi
   end
 
   local outputs = {}
-  for t = 1, 2*n+1 do
+  for t = 1, 2*n do
     local joined = nn.JoinTable(2)(outputs_tbl[t])
     table.insert(outputs, joined)
   end
+
+  local res_joined = nn.JoinTable(2)(outputs_tbl[2*n+1])
+  local res_norm = nn.SoftMax(true)(res_joined)
+  table.insert(outputs, res_norm)
 
   return nn.gModule(inputs, outputs)
 end

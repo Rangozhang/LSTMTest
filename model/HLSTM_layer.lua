@@ -201,7 +201,7 @@ function layer:updateOutput(input)
       hiber_state_final = hiber_state_final[{{},{1,-2}}]
 
       ---------------------- 4. update the state according to hiber state -------
-      local rnn_size_each = self.rnn_size/self.group
+      -- local rnn_size_each = self.rnn_size/self.group
       -- self.state[t] = self:hidden_state_update(self.state[t], self.state[t-1],
       --                                          hiber_state_final, rnn_size_each)
       -- self.output[t] = self:hidden_output_update(self.output[t],
