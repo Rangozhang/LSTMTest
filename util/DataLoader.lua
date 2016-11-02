@@ -2,6 +2,7 @@ require 'util.OneHot'
 -- the modification included support for train/val/test splits
 
 local DataLoader = {}
+local n_class_ = 0
 DataLoader.__index = DataLoader 
 
 function split(inputstr, sep)
@@ -20,6 +21,7 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
     -- split_fractions is e.g. {0.9, 0.05, 0.05}
     local self = {}
     self.n_class = n_class
+    n_class_ = n_class
     self.nbatches = nbatches or 1000
 
     setmetatable(self, DataLoader)
@@ -90,6 +92,7 @@ function DataLoader.create(data_dir, batch_size, seq_length, split_fractions, n_
 
     self.test_x = test_saveddata.data
     self.test_y = test_saveddata.label
+    self.test_seq_y = test_saveddata.seq_label
     self.test_n_data = test_saveddata.n_data
 
     -- count vocab
@@ -183,7 +186,7 @@ function DataLoader:next_test_data()
     if self.test_batch_ix > #self.test_y then
         self.test_batch_ix = 1
     end
-    return self.test_x[self.test_batch_ix], self.test_y[self.test_batch_ix]
+    return self.test_x[self.test_batch_ix], self.test_y[self.test_batch_ix], self.test_seq_y[self.test_batch_ix]
 end
 
 function DataLoader:reset_batch_pointer(split_index, batch_index)
@@ -282,7 +285,7 @@ function DataLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
     for line in io.lines(in_textfile) do
         -- print(line)
         local count_chars = 0
-        for char in line:gmatch'[%a_]' do
+        for char in line:gmatch'[%a]' do
             count_chars = count_chars+1 
         end
         n_line = n_line + 1
@@ -298,6 +301,7 @@ function DataLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
     --local data = torch.ByteTensor(tot_len) -- store it into 1D first, then rearrange
     local data = {}
     local label = {}
+    local seq_label = {}
     -- f = io.open(in_textfile, "r")
     local cur_line = 0
     --print(n_chars)
@@ -319,13 +323,37 @@ function DataLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
         end
         --]]
         data[cur_line] = data_per_line:clone()
-        local label_per_line = torch.Tensor(#string_list-1)
-        for label_ind = 1, #string_list-1 do
-            label_per_line[label_ind] = tonumber(string_list[label_ind])
+
+        local label_per_line
+        local seq_label_per_line
+        if #string_list == 2 then
+          label_per_line = torch.Tensor(#string_list-1)
+          for label_ind = 1, #string_list-1 do
+              label_per_line[label_ind] = tonumber(string_list[label_ind])
+          end
+        elseif #string_list == 4 then
+          label_per_line = torch.Tensor(#string_list-2)
+          seq_label_per_line = torch.Tensor(n_chars[cur_line])
+          for label_ind = 2, #string_list-1 do
+              label_per_line[label_ind-1] = tonumber(string_list[label_ind])
+          end
+          assert(n_chars[cur_line] == #string_list[1])
+          local raw_seq_lbl = string_list[1]
+          for i = 1, n_chars[cur_line] do
+              if string.sub(raw_seq_lbl, i, i) == '_' then
+                  seq_label_per_line[i] = n_class_+1
+              else
+                  seq_label_per_line[i] = tonumber(string.sub(raw_seq_lbl, i, i))
+              end
+          end
         end
+
         --print(label_per_line)
         --io.read()
         label[cur_line] = label_per_line:clone()
+        if seq_label_per_line then
+            seq_label[cur_line] = seq_label_per_line:clone()
+        end
         --[[
         for char in line:gmatch'%d' do
            label[cur_line] = (label[cur_line] or 0)*10 + tonumber(char)
@@ -353,6 +381,7 @@ function DataLoader.text_to_tensor(in_textfile, out_vocabfile, out_tensorfile)
     saved_data = {
         data = data,
         label = label,
+        seq_label = seq_label,
         n_data = n_line
     }
 

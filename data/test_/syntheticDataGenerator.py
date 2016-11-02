@@ -10,13 +10,12 @@ for line in f:
     seq = list(tokens[1])
     print(seq)
     for j in xrange(n_data):
-        data_line = ''.join(random.sample(string.uppercase, random.randint(0,1)))
+        data_line = ''.join(random.sample(string.uppercase, random.randint(0,3)))
 
         for each in seq:
             repeated_num = random.randint(1, 5)
             for z in xrange(repeated_num):
                 data_line += each
-            #data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
-            data_line += ''.join(random.sample(string.uppercase, repeated_num))
-        data_line += ''.join(random.sample(string.uppercase, random.randint(0,1)))
+            data_line += ''.join(random.sample(string.uppercase, random.randint(3,4)))
+        data_line += ''.join(random.sample(string.uppercase, random.randint(0,4)))
         f2.write(tokens[0]+' '+data_line+'\n')
