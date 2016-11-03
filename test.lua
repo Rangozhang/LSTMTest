@@ -104,7 +104,7 @@ for i = 1, n_data do
     end
 
     -- x_input: seq_length x batch_size x input_size
-    local x_input = torch.zeros(seq_length, 1 , vocab_size):cuda()
+    local x_input = torch.zeros(seq_length, batch_size , vocab_size):cuda()
     for t = 1, seq_length do
         x_input[t] = OneHot(vocab_size):forward(x[{{}, t}])
     end
@@ -129,7 +129,7 @@ for i = 1, n_data do
         
         local _, pred_ind = hiber_predictions[t]:max(2)
         local gt_ind = torch.range(1, hiber_y:size(3))[hiber_y[t]:eq(1):byte()]
-        if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
+        -- if opt.overlap and gt_ind:size(1) == 1 then gt_ind = torch.Tensor{gt_ind[1], gt_ind[1]} end
 
         if opt.printing then
           print(tmp_str)
@@ -137,16 +137,7 @@ for i = 1, n_data do
           io.read()
         end
 
-        if opt.overlap then
-            -- need to alter
-            if pred_ind[1] == gt_ind[1] then
-                hiber_confusion:batchAdd(torch.Tensor{pred_ind:squeeze()}, torch.Tensor{gt_ind[1]})
-            else
-                hiber_confusion:batchAdd(torch.Tensor{pred_ind:squeeze()}, torch.Tensor{gt_ind[2]})
-            end
-        else
-            hiber_confusion:batchAdd(torch.Tensor{pred_ind:squeeze()}, torch.Tensor{gt_ind:squeeze()})
-        end
+        hiber_confusion:batchAdd(torch.Tensor{pred_ind:squeeze()}, torch.Tensor{gt_ind:squeeze()})
     end
     final_pred = final_pred/x:size(2)
 

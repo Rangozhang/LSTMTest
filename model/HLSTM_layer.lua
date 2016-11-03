@@ -175,7 +175,7 @@ function layer:updateOutput(input)
   
   -- Hiber LSTM update simultaneously
   self.state = {[0] = self.init_state}
-  -- self.shuffled_state = {[0] = self.init_state}
+  self.shuffled_state = {[0] = self.init_state}
   self.inputs = {}
   for t=1, self.seq_length do
       ---------------------- 1. LSTM framework forward -------------------------
@@ -188,11 +188,12 @@ function layer:updateOutput(input)
       ---------------------- 2. hiber gate forward -----------------------------
       -- Decide whether to use hiber_gate generated hiber_state or hiber_state_groundtruth
       self.hiber_state[t] = self.hiber_gate:forward
-                                {self.state[t-1][self.num_state]:clone(), seq[t]:clone()}
+                                {self.shuffled_state[t-1][self.num_state]:clone(), seq[t]:clone()}
       -- self.usingHGResult = (torch.bernoulli(sigma) == 1)
       -- local hiber_state_final = self.usingHGResult and self.hiber_state[t]:clone()
       --                                              or  hiber_state_groundtruth[t]:clone()
       -- assert(hiber_state_final:size(1) == batch_size)
+
 
       ---------- 3. hiber_state binarization using sampling (hard version) -----
       --[[
@@ -203,33 +204,36 @@ function layer:updateOutput(input)
       assert(hiber_state_final:sum() == batch_size)
       --]]
       
+      -- local hiber_state_final = hiber_state_groundtruth[t]:clone()
       -- needs to get rid of the last column, which is the noise entry
       -- hiber_state_final = hiber_state_final[{{},{1,-2}}]
 
-      -- local rnn_size_each = self.rnn_size/self.group
+      local rnn_size_each = self.rnn_size/self.group
 
-      -- ---------------------- 4. get the shuffled state -------------------------
-      -- local sample_index_for_class = {}
-      -- for i = 1, self.group do
-      --   sample_index_for_class[i] = torch.range(1, lstm_groundtruth:size(1))[lstm_groundtruth[{{}, i}]:byte()]
-      -- end
-      -- local shuffled_state = {}
+      ---------------------- 4. get the shuffled state -------------------------
+      local sample_index_for_class = {}
+      for i = 1, self.group do
+        sample_index_for_class[i] = torch.range(1, lstm_groundtruth:size(1))[lstm_groundtruth[{{}, i}]:byte()]
+      end
+      local shuffled_state = {}
       -- for i, val in pairs(self.state[t-1]) do
-      --   shuffled_state[i] = val:clone()
-      -- end
-      -- for c = 1, self.group do
-      --   local row_indind_for_class = (torch.rand(batch_size)*sample_index_for_class[c]:size(1)):ceil():long()
-      --   local row_ind_for_class = sample_index_for_class[c]:index(1, row_indind_for_class):long()
-      --   local row_for_class_list = {}
-      --   for i = 1, #self.state[t] do
-      --     row_for_class_list[i] = self.state[t][i]:index(1, row_ind_for_class)
-      --   end
-      --   local shuffle_mask = torch.zeros(batch_size, self.group):cuda()
-      --   shuffle_mask[{{}, {c}}]:copy(1-lstm_groundtruth[{{}, {c}}])
-      --   shuffled_state = self:hidden_state_update(shuffled_state, row_for_class_list, 1-shuffle_mask, rnn_size_each)
-      -- end
+      for i, val in pairs(self.state[t]) do
+        shuffled_state[i] = val:clone()
+      end
+      for c = 1, self.group do
+        local row_indind_for_class = (torch.rand(batch_size)*sample_index_for_class[c]:size(1)):ceil():long()
+        local row_ind_for_class = sample_index_for_class[c]:index(1, row_indind_for_class):long()
+        local row_for_class_list = {}
+        for i = 1, #self.state[t] do
+          row_for_class_list[i] = self.state[t][i]:index(1, row_ind_for_class)
+        end
+        local shuffle_mask = torch.zeros(batch_size, self.group):cuda()
+        shuffle_mask[{{}, {c}}]:copy(1-lstm_groundtruth[{{}, {c}}])
+        shuffled_state = self:hidden_state_update(shuffled_state, row_for_class_list, 1-shuffle_mask, rnn_size_each)
+      end
+      self.shuffled_state[t] = shuffled_state
 
-      ---------------------- 5. update the state according to hiber state -------
+      ------------------- 5. update the state according to hiber state -------
 
       -- self.shuffled_state[t] = self:hidden_state_update(self.state[t], shuffled_state,
       --                                                  hiber_state_final, rnn_size_each)
@@ -273,7 +277,7 @@ function layer:updateGradInput(input, gradOutput)
   local dstate = {[self.seq_length] = self.init_state}
   for t=self.seq_length,1,-1 do
     -------------------- 1. Hiber gate backward ------------------
-    local gradH = self.hiber_gate:backward({self.state[t-1][self.num_state-1]:clone(),
+    local gradH = self.hiber_gate:backward({self.shuffled_state[t-1][self.num_state-1]:clone(),
                                                                 input[t]:clone()},
                                                                 hiber_gradOutput[t]:clone())
     gradH = gradH[1]
